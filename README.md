@@ -1,72 +1,37 @@
-This firmware is much better than the old one. tested up to 40A / 60V, no dead board so far :)
+These are my modifications to the [hoverboard-firmware-hack by NiklasFauth](https://github.com/NiklasFauth/hoverboard-firmware-hack)
 
-## hoverboard-firmware-hack
+## the Hardware
 
-This repo contains open source firmware for generic Hoverboard Mainboards.
-The firmware you can find here allows you to use your Hoverboard Hardware (like the Mainboard, Motors and Battery) for cool projects like driving armchairs, person-tracking transportation robots and every other application you can imagine that requires controlling the Motors.
+I run this Firmware on Board with the GD32 MCU (no good image available).
+The Firmware is built and flashed with PlatformIO on VisualStudio Code.
 
-If you want an overview of what you can do with this firmware, here is a ~40min video of a talk about this project:
-https://media.ccc.de/v/gpn18-95-howto-moving-objects
+The Sensor boards where removed.
+I attached a HC06 style Bluetooth Module to USART2 PBA2/PA3 (left sensor board connector).
+The Input is attached via I2C to PB10/PB11 (right sensor board connector)
 
-There is a bobbycar-optimized firmware based on this one with driving modes, acceleration ramps and some other features:  https://github.com/larsmm/hoverboard-firmware-hack-bbcar
-
----
-
-#### Hardware
-![otter](https://raw.githubusercontent.com/NiklasFauth/hoverboard-firmware-hack/master/pinout.png)
-
-The original Hardware supports two 4-pin cables that originally were connected to the two sensor boards. They break out GND, 12/15V and USART2&3 of the Hoverboard mainboard.
-Both USART2 & 3 can be used for UART and I2C, PA2&3 can be used as 12bit ADCs.
-
-The reverse-engineered schematics of the mainboard can be found here:
-http://vocke.tv/lib/exe/fetch.php?media=20150722_hoverboard_sch.pdf
+Steering is done by speed difference of the wheels.
 
 ---
 
-#### Flashing
-To build the firmware, just type "make". Make sure you have specified your gcc-arm-none-eabi binary (version 7 works, there is a version that does not!) location in the Makefile ("PREFIX = ..."). Right to the STM32, there is a debugging header with GND, 3V3, SWDIO and SWCLK. Connect GND, SWDIO and SWCLK to your SWD programmer, like the ST-Link found on many STM devboards.
+### Telemetry
+Telemtetry is sent over Bluetooth and interpreted by the Android App "Bluetooth electronics" [google play link](https://play.google.com/store/apps/details?id=com.keuwl.arduinobluetooth)
 
-Make sure you hold the powerbutton or connect a jumper to the power button pins while flashing the firmware, as the STM might release the power latch and switches itself off during flashing. Battery > 36V have to be connected while flashing.
+### Mode selection
+The operation mode can be selected while power-on.
+To select a mode press and hold the power button.
+While holding the power button, the nunchuck buttons can be used to increase/decrease the mode number.
+The current mode is indicated by beeps.
 
-To flash the STM32, use the ST-Flash utility (https://github.com/texane/stlink).
+#### Mode 1
+Default mode, max speed about half of possible speed. Input Filter is slow, so only slow changes to speed and steering are possible.
+  
+#### Mode 2
+Full speed with Turbo. Input Filter like mode 1.
 
-If you never flashed your mainboard before, the STM is probably locked. To unlock the flash, use the following OpenOCD command:
-```
-openocd -f interface/stlink-v2.cfg -f target/stm32f1x.cfg -c init -c "reset halt" -c "stm32f1x unlock 0"
-```
+#### Mode 3
+Full speed with Turbo. Input Filter is faster. I should be possible to slip the wheels.
 
-If that does not work:
-```
-openocd -f interface/stlink-v2.cfg -f target/stm32f1x.cfg -c init -c "reset halt" -c "mww 0x40022004 0x45670123" -c "mww 0x40022004 0xCDEF89AB" -c "mww 0x40022008 0x45670123" -c "mww 0x40022008 0xCDEF89AB" -c "mww 0x40022010 0x220" -c "mww 0x40022010 0x260" -c "sleep 100" -c "mww 0x40022010 0x230" -c "mwh 0x1ffff800 0x5AA5" -c "sleep 1000" -c "mww 0x40022010 0x2220" -c "sleep 100" -c "mdw 0x40022010" -c "mdw 0x4002201c" -c "mdw 0x1ffff800" -c targets -c "halt" -c "stm32f1x unlock 0"
-```
-```
-openocd -f interface/stlink-v2.cfg -f target/stm32f1x.cfg -c init -c "reset halt" -c "mww 0x40022004 0x45670123" -c "mww 0x40022004 0xCDEF89AB" -c "mww 0x40022008 0x45670123" -c "mww 0x40022008 0xCDEF89AB" -c targets -c "halt" -c "stm32f1x unlock 0"
-```
-Or use the Windows ST-Link utility.
+### Control
+Speed is increased and decreased by pushing the Joystick on the nunchuck forwards/backwards. When the speed is at ~80%, the turbo can be activated with button-Z. The Turbo works by weakening the magnetic field while increasing the commutation speed. Be careful with that function, the speed is dangerous. Protective wear is advised.
 
-Then you can simply flash the firmware:
-```
-st-flash --reset write build/hover.bin 0x8000000
-```
-
----
-#### Troubleshooting
-First, check that power is connected and voltage is >36V while flashing.
-If the board draws more than 100mA in idle, it's probably broken.
-
-If the motors do something, but don't rotate smooth and quietly, try to use an alternative phase mapping. Usually, color-correct mapping (blue to blue, green to green, yellow to yellow) works fine. However, some hoverboards have a different layout then others, and this might be the reason your motor isn't spinning.
-
-Nunchuck not working: Use the right one of the 2 types of nunchucks. Use i2c pullups.
-
-Nunchuck or PPM working bad: The i2c bus and PPM signal are very sensitive to emv distortions of the motor controller. They get stronger the faster you are. Keep cables short, use shielded cable, use ferrits, stabalize voltage in nunchuck or reviever, add i2c pullups. To many errors leads to very high accelerations which triggers the protection board within the battery to shut everything down.
-
-Most robust way for input is to use the ADC and potis. It works well even on 1m unshielded cable. Solder ~100k Ohm resistors between ADC-inputs and gnd directly on the mainboard. Use potis as pullups to 3.3V.
-
----
-
-
-#### Examples
-
-Have a look at the config.h in the Inc directory. That's where you configure to firmware to match your project.
-Currently supported: Wii Nunchuck, analog potentiometer and PPM-Sum signal from a RC remote.
-If you need additional features like a boost button, have a look at the while(1) loop in the main.c
+When Button-C is pressed, the steering should be stronger. Be careful at high speeds!

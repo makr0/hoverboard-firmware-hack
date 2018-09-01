@@ -22,6 +22,10 @@
 #include "stm32f1xx_hal.h"
 #include "defines.h"
 #include "setup.h"
+#include "beeper.h"
+#include "startup.h"
+#include "comms.h"
+#include "control.h"
 #include "config.h"
 //#include "hd44780.h"
 
@@ -52,11 +56,16 @@ uint8_t button1, button2;
 
 int steer; // global variable for steering. -1000 to 1000
 int speed; // global variable for speed. -1000 to 1000
+float steer_coefficient = DEFAULT_STEER_COEFFICIENT; // steering strength. is changed on button press
 
 extern volatile int pwml;  // global variable for pwm left. -1000 to 1000
 extern volatile int pwmr;  // global variable for pwm right. -1000 to 1000
 extern volatile int weakl; // global variable for field weakening left. -1000 to 1000
 extern volatile int weakr; // global variable for field weakening right. -1000 to 1000
+float weakrFloat;  // for ramping up Turbo
+float weaklFloat;  // for ramping up Turbo
+float FILTER_var = FILTER; // variable speed input filter
+float STEER_FILTER_var = STEER_FILTER; // variable steering input filter
 
 extern uint8_t buzzerFreq;    // global variable for the buzzer pitch. can be 1, 2, 3, 4, 5, 6, 7...
 extern uint8_t buzzerPattern; // global variable for the buzzer pattern. can be 1, 2, 3, 4, 5, 6, 7...
@@ -65,6 +74,11 @@ extern uint8_t enable; // global variable for motor enable
 
 extern volatile uint32_t timeout; // global variable for timeout
 extern float batteryVoltage; // global variable for battery voltage
+extern float currentLeft; // left motor current
+extern float currentRight;// right motor current
+int speedL = 0, speedR = 0;
+float board_temp_deg_c;
+int8_t mode;
 
 uint32_t inactivity_timeout_counter;
 
@@ -77,119 +91,66 @@ int milli_vel_error_sum = 0;
 
 
 void poweroff() {
-    if (abs(speed) < 20) {
-        buzzerPattern = 0;
-        enable = 0;
-        for (int i = 0; i < 8; i++) {
-            buzzerFreq = i;
-            HAL_Delay(100);
-        }
-        HAL_GPIO_WritePin(OFF_PORT, OFF_PIN, 0);
-        while(1) {}
-    }
+    buzzerPattern = 0;
+    enable = 0;
+    buzzerFreq = 6;
+    HAL_Delay(SOUND_DELAY_DOWN);
+    buzzerFreq = 0;
+    HAL_Delay(SOUND_DELAY_DOWN);
+    buzzerFreq = 8;
+    HAL_Delay(SOUND_DELAY_DOWN);
+    buzzerFreq = 0;
+
+    HAL_GPIO_WritePin(OFF_PORT, OFF_PIN, 0);
+    while(1) {}
 }
 
 
 int main(void) {
   HAL_Init();
-  __HAL_RCC_AFIO_CLK_ENABLE();
-  HAL_NVIC_SetPriorityGrouping(NVIC_PRIORITYGROUP_4);
-  /* System interrupt init*/
-  /* MemoryManagement_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(MemoryManagement_IRQn, 0, 0);
-  /* BusFault_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(BusFault_IRQn, 0, 0);
-  /* UsageFault_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(UsageFault_IRQn, 0, 0);
-  /* SVCall_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(SVCall_IRQn, 0, 0);
-  /* DebugMonitor_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DebugMonitor_IRQn, 0, 0);
-  /* PendSV_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(PendSV_IRQn, 0, 0);
-  /* SysTick_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
-
+  Interrupts_Config();
   SystemClock_Config();
 
-  __HAL_RCC_DMA1_CLK_DISABLE();
   MX_GPIO_Init();
   MX_TIM_Init();
   MX_ADC1_Init();
   MX_ADC2_Init();
 
-  #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-    UART_Init();
-  #endif
+  Peripherals_Config();
 
+  // hold Power
   HAL_GPIO_WritePin(OFF_PORT, OFF_PIN, 1);
 
   HAL_ADC_Start(&hadc1);
   HAL_ADC_Start(&hadc2);
 
-  for (int i = 8; i >= 0; i--) {
+  for (int i = 8; i >= 3; i--) {
     buzzerFreq = i;
-    HAL_Delay(100);
+    HAL_Delay(SOUND_DELAY_UP);
   }
   buzzerFreq = 0;
 
   HAL_GPIO_WritePin(LED_PORT, LED_PIN, 1);
 
   int lastSpeedL = 0, lastSpeedR = 0;
-  int speedL = 0, speedR = 0;
-  float direction = 1;
-
-  #ifdef CONTROL_PPM
-    PPM_Init();
-  #endif
-
-  #ifdef CONTROL_NUNCHUCK
-    I2C_Init();
-    Nunchuck_Init();
-  #endif
-
-  #ifdef CONTROL_SERIAL_USART2
-    UART_Control_Init();
-    HAL_UART_Receive_DMA(&huart2, (uint8_t *)&command, 4);
-  #endif
-
-  #ifdef DEBUG_I2C_LCD
-    I2C_Init();
-    HAL_Delay(50);
-    lcd.pcf8574.PCF_I2C_ADDRESS = 0x27;
-      lcd.pcf8574.PCF_I2C_TIMEOUT = 5;
-      lcd.pcf8574.i2c = hi2c2;
-      lcd.NUMBER_OF_LINES = NUMBER_OF_LINES_2;
-      lcd.type = TYPE0;
-
-      if(LCD_Init(&lcd)!=LCD_OK){
-          // error occured
-          //TODO while(1);
-      }
-
-    LCD_ClearDisplay(&lcd);
-    HAL_Delay(5);
-    LCD_SetLocation(&lcd, 0, 0);
-    LCD_WriteString(&lcd, "Hover V2.0");
-    LCD_SetLocation(&lcd, 0, 1);
-    LCD_WriteString(&lcd, "Initializing...");
-  #endif
-
   float board_temp_adc_filtered = (float)adc_buffer.temp;
-  float board_temp_deg_c;
 
-  enable = 1;  // enable motors
+  mode = startupModeSelect();
+  if(mode == 3) {
+    STEER_FILTER_var = 0.5;
+    FILTER_var = 0.2;
+  }
 
   while(1) {
     HAL_Delay(DELAY_IN_MAIN_LOOP); //delay in ms
 
     #ifdef CONTROL_NUNCHUCK
       Nunchuck_Read();
-      cmd1 = CLAMP((nunchuck_data[0] - 127) * 8, -1000, 1000); // x - axis. Nunchuck joystick readings range 30 - 230
-      cmd2 = CLAMP((nunchuck_data[1] - 128) * 8, -1000, 1000); // y - axis
+      cmd1 = CLAMP((nunchuck_data[0] - 127) * 8, -1000, 1000); // x - axis
+      cmd2 = CLAMP((nunchuck_data[1] - 129) * 8, -1000, 1000); // y - axis
 
-      button1 = (uint8_t)nunchuck_data[5] & 1;
-      button2 = (uint8_t)(nunchuck_data[5] >> 1) & 1;
+      button1 = (uint8_t) (nunchuck_data[5]       & 1) ^ 1;
+      button2 = (uint8_t)((nunchuck_data[5] >> 1) & 1) ^ 1;
     #endif
 
     #ifdef CONTROL_PPM
@@ -217,21 +178,44 @@ int main(void) {
 
       timeout = 0;
     #endif
+    // calculate board temperature
+    board_temp_adc_filtered = board_temp_adc_filtered * 0.99 + (float)adc_buffer.temp * 0.01;
+    board_temp_deg_c = ((float)TEMP_CAL_HIGH_DEG_C - (float)TEMP_CAL_LOW_DEG_C) / ((float)TEMP_CAL_HIGH_ADC - (float)TEMP_CAL_LOW_ADC) * (board_temp_adc_filtered - (float)TEMP_CAL_LOW_ADC) + (float)TEMP_CAL_LOW_DEG_C;
 
 
     // ####### LOW-PASS FILTER #######
-    steer = steer * (1.0 - FILTER) + cmd1 * FILTER;
-    speed = speed * (1.0 - FILTER) + cmd2 * FILTER;
+    steer = steer * (1.0 - STEER_FILTER_var) + cmd1 * STEER_FILTER_var;
+    speed = speed * (1.0 - FILTER_var) + cmd2 * FILTER_var;
 
 
     // ####### MIXER #######
-    speedR = CLAMP(speed * SPEED_COEFFICIENT -  steer * STEER_COEFFICIENT, -1000, 1000);
-    speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * STEER_COEFFICIENT, -1000, 1000);
+    steer_coefficient = steer_coefficient * (1.0 - STEER_FILTER_var) + (button2 ? BUTTON_STEER_COEFFICIENT : DEFAULT_STEER_COEFFICIENT) * STEER_FILTER_var;
+    speedR = CLAMP(speed * SPEED_COEFFICIENT -  steer * steer_coefficient, -1000, 1000);
+    speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * steer_coefficient, -1000, 1000);
 
-
-    #ifdef ADDITIONAL_CODE
-      ADDITIONAL_CODE;
-    #endif
+    // ####### MODE HANDLING ############
+    if (mode == 1) {  // Mode 1, slow, max SPEED MODE1_MAX_SPEED
+      speedR = CLAMP(speedR, -MODE1_MAX_SPEED, MODE1_MAX_SPEED);
+      speedL = CLAMP(speedL, -MODE1_MAX_SPEED, MODE1_MAX_SPEED);
+      weakl = 0;
+      weakr = 0;
+    }
+    if (mode >= 2) {  // Mode 2, full speed, with turbo
+      // ramp up turbo if speed over 800 and turbo button pressed
+      if(speedL > 800 && button1) {
+        weaklFloat = weaklFloat * 0.95 + 400.0 * 0.05;
+      } else {
+      // ramp down turbo if slower
+        weaklFloat = weaklFloat * 0.95;
+      }
+      if(speedR > 800 && button1) {
+        weakrFloat = weakrFloat * 0.95 + 400.0 * 0.05;
+      } else {
+        weakrFloat = weakrFloat * 0.95;
+      }
+      weakl = (int)weaklFloat;
+      weakr = (int)weakrFloat;
+    }
 
 
     // ####### SET OUTPUTS #######
@@ -253,27 +237,12 @@ int main(void) {
 
 
     if (inactivity_timeout_counter % 25 == 0) {
-      // ####### CALC BOARD TEMPERATURE #######
-      board_temp_adc_filtered = board_temp_adc_filtered * 0.99 + (float)adc_buffer.temp * 0.01;
-      board_temp_deg_c = ((float)TEMP_CAL_HIGH_DEG_C - (float)TEMP_CAL_LOW_DEG_C) / ((float)TEMP_CAL_HIGH_ADC - (float)TEMP_CAL_LOW_ADC) * (board_temp_adc_filtered - (float)TEMP_CAL_LOW_ADC) + (float)TEMP_CAL_LOW_DEG_C;
-      
-      // ####### DEBUG SERIAL OUT #######
-      #ifdef CONTROL_ADC
-        setScopeChannel(0, (int)adc_buffer.l_tx2);  // 1: ADC1
-        setScopeChannel(1, (int)adc_buffer.l_rx2);  // 2: ADC2
-      #endif
-      setScopeChannel(2, (int)speedR);  // 3: output speed: 0-1000
-      setScopeChannel(3, (int)speedL);  // 4: output speed: 0-1000
-      setScopeChannel(4, (int)adc_buffer.batt1);  // 5: for battery voltage calibration
-      setScopeChannel(5, (int)(batteryVoltage * 100.0f));  // 6: for verifying battery voltage calibration
-      setScopeChannel(6, (int)board_temp_adc_filtered);  // 7: for board temperature calibration
-      setScopeChannel(7, (int)board_temp_deg_c);  // 8: for verifying board temperature calibration
-      consoleScope();
+      prepareAndSendTelemetry();
     }
 
 
     // ####### POWEROFF BY POWER-BUTTON #######
-    if (HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN) && weakr == 0 && weakl == 0) {
+    if (HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN)) {
       enable = 0;
       while (HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN)) {}
       poweroff();
@@ -281,7 +250,7 @@ int main(void) {
 
 
     // ####### BEEP AND EMERGENCY POWEROFF #######
-    if ((TEMP_POWEROFF_ENABLE && board_temp_deg_c >= TEMP_POWEROFF && abs(speed) < 20) || (batteryVoltage < ((float)BAT_LOW_DEAD * (float)BAT_NUMBER_OF_CELLS) && abs(speed) < 20)) {  // poweroff before mainboard burns OR low bat 3
+    if ((TEMP_POWEROFF_ENABLE && board_temp_deg_c >= TEMP_POWEROFF && ABS(speed) < 20) || (batteryVoltage < ((float)BAT_LOW_DEAD * (float)BAT_NUMBER_OF_CELLS) && ABS(speed) < 20)) {  // poweroff before mainboard burns OR low bat 3
       poweroff();
     } else if (TEMP_WARNING_ENABLE && board_temp_deg_c >= TEMP_WARNING) {  // beep if mainboard gets hot
       buzzerFreq = 4;
@@ -302,7 +271,7 @@ int main(void) {
 
 
     // ####### INACTIVITY TIMEOUT #######
-    if (abs(speedL) > 50 || abs(speedR) > 50) {
+    if (ABS(speedL) > 50 || ABS(speedR) > 50) {
       inactivity_timeout_counter = 0;
     } else {
       inactivity_timeout_counter ++;
@@ -313,45 +282,3 @@ int main(void) {
   }
 }
 
-/** System Clock Configuration
-*/
-void SystemClock_Config(void) {
-  RCC_OscInitTypeDef RCC_OscInitStruct;
-  RCC_ClkInitTypeDef RCC_ClkInitStruct;
-  RCC_PeriphCLKInitTypeDef PeriphClkInit;
-
-  /**Initializes the CPU, AHB and APB busses clocks
-    */
-  RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState            = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = 16;
-  RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource       = RCC_PLLSOURCE_HSI_DIV2;
-  RCC_OscInitStruct.PLL.PLLMUL          = RCC_PLL_MUL16;
-  HAL_RCC_OscConfig(&RCC_OscInitStruct);
-
-  /**Initializes the CPU, AHB and APB busses clocks
-    */
-  RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-
-  HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2);
-
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
-  PeriphClkInit.AdcClockSelection    = RCC_ADCPCLK2_DIV8;  // 8 MHz
-  HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit);
-
-  /**Configure the Systick interrupt time
-    */
-  HAL_SYSTICK_Config(HAL_RCC_GetHCLKFreq() / 1000);
-
-  /**Configure the Systick
-    */
-  HAL_SYSTICK_CLKSourceConfig(SYSTICK_CLKSOURCE_HCLK);
-
-  /* SysTick_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
-}

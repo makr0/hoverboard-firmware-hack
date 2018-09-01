@@ -132,6 +132,8 @@ int offsetdcl   = 2000;
 int offsetdcr   = 2000;
 
 float batteryVoltage = BAT_NUMBER_OF_CELLS * 4.0;
+float currentLeft = 0;
+float currentRight = 0;
 
 int curl = 0;
 // int errorl = 0;
@@ -164,9 +166,11 @@ void DMA1_Channel1_IRQHandler() {
   if (buzzerTimer % 1000 == 0) {  // because you get float rounding errors if it would run every time
     batteryVoltage = batteryVoltage * 0.99 + ((float)adc_buffer.batt1 * ((float)BAT_CALIB_REAL_VOLTAGE / (float)BAT_CALIB_ADC)) * 0.01;
   }
-
+  currentLeft  = ABS((adc_buffer.dcl - offsetdcl) * MOTOR_AMP_CONV_DC_AMP);
+  currentRight = ABS((adc_buffer.dcr - offsetdcr) * MOTOR_AMP_CONV_DC_AMP);
+  
   //disable PWM when current limit is reached (current chopping)
-  if(ABS((adc_buffer.dcl - offsetdcl) * MOTOR_AMP_CONV_DC_AMP) > DC_CUR_LIMIT || timeout > TIMEOUT || enable == 0) {
+  if(currentLeft > DC_CUR_LIMIT || timeout > TIMEOUT || enable == 0) {
     LEFT_TIM->BDTR &= ~TIM_BDTR_MOE;
     //HAL_GPIO_WritePin(LED_PORT, LED_PIN, 1);
   } else {
@@ -174,7 +178,7 @@ void DMA1_Channel1_IRQHandler() {
     //HAL_GPIO_WritePin(LED_PORT, LED_PIN, 0);
   }
 
-  if(ABS((adc_buffer.dcr - offsetdcr) * MOTOR_AMP_CONV_DC_AMP)  > DC_CUR_LIMIT || timeout > TIMEOUT || enable == 0) {
+  if(currentRight  > DC_CUR_LIMIT || timeout > TIMEOUT || enable == 0) {
     RIGHT_TIM->BDTR &= ~TIM_BDTR_MOE;
   } else {
     RIGHT_TIM->BDTR |= TIM_BDTR_MOE;
@@ -203,37 +207,6 @@ void DMA1_Channel1_IRQHandler() {
   posr %= 6;
 
   blockPhaseCurrent(posl, adc_buffer.rl1 - offsetrl1, adc_buffer.rl2 - offsetrl2, &curl);
-
-  //setScopeChannel(2, (adc_buffer.rl1 - offsetrl1) / 8);
-  //setScopeChannel(3, (adc_buffer.rl2 - offsetrl2) / 8);
-
-
-  // uint8_t buzz(uint16_t *notes, uint32_t len){
-    // static uint32_t counter = 0;
-    // static uint32_t timer = 0;
-    // if(len == 0){
-        // return(0);
-    // }
-    
-    // struct {
-        // uint16_t freq : 4;
-        // uint16_t volume : 4;
-        // uint16_t time : 8;
-    // } note = notes[counter];
-    
-    // if(timer / 500 == note.time){
-        // timer = 0;
-        // counter++;
-    // }
-    
-    // if(counter == len){
-        // counter = 0;
-    // }
-
-    // timer++;
-    // return(note.freq);
-  // }
-
 
   //create square wave for buzzer
   buzzerTimer++;
