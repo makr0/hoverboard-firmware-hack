@@ -35,6 +35,7 @@
 #include "stm32f1xx.h"
 #include "stm32f1xx_it.h"
 #include "config.h"
+#include "hallinterrupts.h"
 
 extern DMA_HandleTypeDef hdma_i2c2_rx;
 extern DMA_HandleTypeDef hdma_i2c2_tx;
@@ -251,6 +252,64 @@ void DMA1_Channel7_IRQHandler(void)
 
   /* USER CODE END DMA1_Channel5_IRQn 1 */
 }
+#endif
+
+/////////////////////////////////////////
+// EXTI interrupts - used for HallInterrupt, left wheel
+
+#ifdef HALL_INTERRUPTS
+
+void EXTI9_5_IRQHandler(void)
+{
+  unsigned long triggered = 0;
+
+  if(__HAL_GPIO_EXTI_GET_IT(LEFT_HALL_W_PIN) != RESET)
+  {
+    __HAL_GPIO_EXTI_CLEAR_IT(LEFT_HALL_W_PIN);
+    triggered |= LEFT_HALL_W_PIN;
+  }
+
+  if(__HAL_GPIO_EXTI_GET_IT(LEFT_HALL_V_PIN) != RESET)
+  {
+    __HAL_GPIO_EXTI_CLEAR_IT(LEFT_HALL_V_PIN);
+    triggered |= LEFT_HALL_V_PIN;
+  }
+  if(__HAL_GPIO_EXTI_GET_IT(LEFT_HALL_U_PIN) != RESET)
+  {
+    __HAL_GPIO_EXTI_CLEAR_IT(LEFT_HALL_U_PIN);
+    triggered |= LEFT_HALL_U_PIN;
+  }
+ 
+  if (triggered & HALL_PIN_MASK) HallInterruptsInterrupt();
+} 
+#endif
+
+
+/////////////////////////////////////////
+// EXTI interrupts - used for HallInterrupt, right wheel
+#ifdef HALL_INTERRUPTS
+
+void EXTI15_10_IRQHandler(void)
+{
+  unsigned long triggered = 0;
+  if(__HAL_GPIO_EXTI_GET_IT(RIGHT_HALL_W_PIN) != RESET)
+  {
+    __HAL_GPIO_EXTI_CLEAR_IT(RIGHT_HALL_W_PIN);
+    triggered |= RIGHT_HALL_W_PIN;
+  }
+  if(__HAL_GPIO_EXTI_GET_IT(RIGHT_HALL_V_PIN) != RESET)
+  {
+    __HAL_GPIO_EXTI_CLEAR_IT(RIGHT_HALL_V_PIN);
+    triggered |= RIGHT_HALL_V_PIN;
+  }
+  if(__HAL_GPIO_EXTI_GET_IT(RIGHT_HALL_U_PIN ) != RESET)
+  {
+    __HAL_GPIO_EXTI_CLEAR_IT(RIGHT_HALL_U_PIN );
+    triggered |= RIGHT_HALL_U_PIN ;
+  }
+
+  if (triggered & HALL_PIN_MASK) HallInterruptsInterrupt();
+} 
 #endif
 
 /******************************************************************************/

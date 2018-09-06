@@ -55,7 +55,7 @@ int8_t startupModeSelect() {
         oldmode = mode;
         modeBeepDone = 1;
       }
-      prepareAndSendTelemetry();
+      SendTelemetry();
       HAL_Delay(100);
   }
 

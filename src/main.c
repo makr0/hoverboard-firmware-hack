@@ -27,8 +27,11 @@
 #include "comms.h"
 #include "control.h"
 #include "config.h"
+#include "bldc.h"
+#include "hallinterrupts.h"
 //#include "hd44780.h"
 
+#include <memory.h>
 void SystemClock_Config(void);
 
 extern TIM_HandleTypeDef htim_left;
@@ -73,9 +76,6 @@ extern uint8_t buzzerPattern; // global variable for the buzzer pattern. can be 
 extern uint8_t enable; // global variable for motor enable
 
 extern volatile uint32_t timeout; // global variable for timeout
-extern float batteryVoltage; // global variable for battery voltage
-extern float currentLeft; // left motor current
-extern float currentRight;// right motor current
 int speedL = 0, speedR = 0;
 float board_temp_deg_c;
 int8_t mode;
@@ -118,11 +118,18 @@ int main(void) {
 
   Peripherals_Config();
 
+  memset((void*)&electrical_measurements, 0, sizeof(electrical_measurements));
+
   // hold Power
   HAL_GPIO_WritePin(OFF_PORT, OFF_PIN, 1);
 
   HAL_ADC_Start(&hadc1);
   HAL_ADC_Start(&hadc2);
+
+  #ifdef HALL_INTERRUPTS
+    // enables interrupt reading of hall sensors for dead reconing wheel position.
+    HallInterruptinit();
+  #endif
 
   for (int i = 8; i >= 3; i--) {
     buzzerFreq = i;
@@ -134,6 +141,7 @@ int main(void) {
 
   int lastSpeedL = 0, lastSpeedR = 0;
   float board_temp_adc_filtered = (float)adc_buffer.temp;
+  float batteryVoltage; // global variable for battery voltage
 
   mode = startupModeSelect();
   if(mode == 3) {
@@ -178,9 +186,15 @@ int main(void) {
 
       timeout = 0;
     #endif
-    // calculate board temperature
+    // ####### CALC BOARD TEMPERATURE #######
     board_temp_adc_filtered = board_temp_adc_filtered * 0.99 + (float)adc_buffer.temp * 0.01;
     board_temp_deg_c = ((float)TEMP_CAL_HIGH_DEG_C - (float)TEMP_CAL_LOW_DEG_C) / ((float)TEMP_CAL_HIGH_ADC - (float)TEMP_CAL_LOW_ADC) * (board_temp_adc_filtered - (float)TEMP_CAL_LOW_ADC) + (float)TEMP_CAL_LOW_DEG_C;
+    
+    batteryVoltage = electrical_measurements.batteryVoltage; // copy battery voltage to local var
+    electrical_measurements.board_temp_raw = adc_buffer.temp;
+    electrical_measurements.board_temp_filtered = board_temp_adc_filtered;
+    electrical_measurements.board_temp_deg_c = board_temp_deg_c;
+    electrical_measurements.charging = !(CHARGER_PORT->IDR & CHARGER_PIN);
 
 
     // ####### LOW-PASS FILTER #######
@@ -237,7 +251,7 @@ int main(void) {
 
 
     if (inactivity_timeout_counter % 25 == 0) {
-      prepareAndSendTelemetry();
+        SendTelemetry();
     }
 
 
@@ -247,6 +261,7 @@ int main(void) {
       while (HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN)) {}
       poweroff();
     }
+
 
 
     // ####### BEEP AND EMERGENCY POWEROFF #######
@@ -277,7 +292,12 @@ int main(void) {
       inactivity_timeout_counter ++;
     }
     if (inactivity_timeout_counter > (INACTIVITY_TIMEOUT * 60 * 1000) / (DELAY_IN_MAIN_LOOP + 1)) {  // rest of main loop needs maybe 1ms
-      poweroff();
+      // the charger is plugged in, do not power off
+      if (electrical_measurements.charging){
+        inactivity_timeout_counter = 0;
+      } else {
+        poweroff();
+      }
     }
   }
 }
