@@ -25,27 +25,35 @@ int8_t startupModeSelect() {
       button1 = (uint8_t) (nunchuck_data[5]       & 1) ^ 1;
       button2 = (uint8_t)((nunchuck_data[5] >> 1) & 1) ^ 1;
       cmd1 = CLAMP((nunchuck_data[0] - 127) * 8, -1000, 1000); // x - axis
+      cmd2 = CLAMP((nunchuck_data[1] - 128) * 8, -1000, 1000); // x - axis
       if(cmd1 < -500) {
         enable = 0;
         beepFreq(1,8);
+        while (cmd1 < -500) {
+          Nunchuck_Read();
+          cmd1 = CLAMP((nunchuck_data[0] - 127) * 8, -1000, 1000); // x - axis
+        }
+      }
+      if(cmd1 > 500) {
+        mode=1;
         while (cmd1 > 500) {
           Nunchuck_Read();
           cmd1 = CLAMP((nunchuck_data[0] - 127) * 8, -1000, 1000); // x - axis
         }
       }
 
-      if(button1) {
-        mode++;
-        while(button1) {
+      if(cmd2 > 500) {
+        mode=2;
+        while (cmd2 > 500) {
           Nunchuck_Read();
-          button1 = (uint8_t) (nunchuck_data[5]       & 1) ^ 1;
+          cmd2 = CLAMP((nunchuck_data[1] - 127) * 8, -1000, 1000); // x - axis
         }
       }
-      if(button2) {
-        mode--;
-        while(button2) {
+      if(cmd2 < -500) {
+        mode=3;
+        while (cmd2 < -500) {
           Nunchuck_Read();
-          button2 = (uint8_t)((nunchuck_data[5] >> 1) & 1) ^ 1;
+          cmd2 = CLAMP((nunchuck_data[1] - 127) * 8, -1000, 1000); // x - axis
         }
       }
 
@@ -56,7 +64,7 @@ int8_t startupModeSelect() {
         modeBeepDone = 1;
       }
       SendTelemetry();
-      HAL_Delay(100);
+      HAL_Delay(10);
   }
 
   if(!modeBeepDone) {
