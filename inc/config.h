@@ -25,7 +25,7 @@
 #define BAT_LOW_LVL2            3.5       // your battery is almost empty. Charge now! [V/cell]
 #define BAT_LOW_DEAD            3.37      // undervoltage poweroff. (while not driving) [V/cell]
 
-#define DC_CUR_LIMIT     25         // DC current limit in amps per motor. so 15 means it will draw 30A out of your battery. it does not disable motors, it is a soft current limit.
+#define DC_CUR_LIMIT     15         // DC current limit in amps per motor. so 15 means it will draw 30A out of your battery. it does not disable motors, it is a soft current limit.
 
 #define SOUND_DELAY_UP 80   // how fast is the startup sound
 #define SOUND_DELAY_DOWN 100 // how fast is the shutdown sound
@@ -100,7 +100,7 @@
 #define FILTER              0.03  // lower value == softer filter. do not use values <0.01, you will get float precision issues.
 #define STEER_FILTER        0.1  // steering should react faster
 #define SPEED_COEFFICIENT   1.05  // higher value == stronger. 0.0 to ~2.0?
-#define DEFAULT_STEER_COEFFICIENT   0.5  // higher value == stronger. if you do not want any steering, set it to 0.0; 0.0 to 1.0
+#define DEFAULT_STEER_COEFFICIENT   0.9  // higher value == stronger. if you do not want any steering, set it to 0.0; 0.0 to 1.0
                                          // steer coefficient while no button pressed
 #define BUTTON_STEER_COEFFICIENT   0.9  // steer coefficient while button2 pressed
 #define INVERT_R_DIRECTION

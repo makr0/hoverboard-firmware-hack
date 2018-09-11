@@ -65,6 +65,8 @@ extern volatile int pwml;  // global variable for pwm left. -1000 to 1000
 extern volatile int pwmr;  // global variable for pwm right. -1000 to 1000
 extern volatile int weakl; // global variable for field weakening left. -1000 to 1000
 extern volatile int weakr; // global variable for field weakening right. -1000 to 1000
+extern int useBlockPWM;
+
 float weakrFloat;  // for ramping up Turbo
 float weaklFloat;  // for ramping up Turbo
 float FILTER_var = FILTER; // variable speed input filter
@@ -196,6 +198,8 @@ int main(void) {
     electrical_measurements.board_temp_deg_c = board_temp_deg_c;
     electrical_measurements.charging = !(CHARGER_PORT->IDR & CHARGER_PIN);
 
+    useBlockPWM = !button2;
+
 
     // ####### LOW-PASS FILTER #######
     steer = steer * (1.0 - STEER_FILTER_var) + cmd1 * STEER_FILTER_var;
@@ -205,7 +209,7 @@ int main(void) {
     // ####### MIXER #######
     steer_coefficient = steer_coefficient * (1.0 - STEER_FILTER_var) + (button2 ? BUTTON_STEER_COEFFICIENT : DEFAULT_STEER_COEFFICIENT) * STEER_FILTER_var;
     speedR = CLAMP(speed * SPEED_COEFFICIENT -  steer * steer_coefficient, -1000, 1000);
-    speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * steer_coefficient, -1000, 1000);
+    speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * steer_coefficient, -1000, 2000);
 
     // ####### MODE HANDLING ############
     if (mode == 1) {  // Mode 1, slow, max SPEED MODE1_MAX_SPEED
@@ -216,14 +220,14 @@ int main(void) {
     }
     if (mode >= 2) {  // Mode 2, full speed, with turbo
       // ramp up turbo if speed over 800 and turbo button pressed
-      if(speedL > 800 && button1) {
-        weaklFloat = weaklFloat * 0.95 + 400.0 * 0.05;
+      if(HallData[0].HallSpeed > 800 && button1) {
+        weaklFloat = weaklFloat * 0.95 + 450.0 * 0.05;
       } else {
       // ramp down turbo if slower
         weaklFloat = weaklFloat * 0.95;
       }
-      if(speedR > 800 && button1) {
-        weakrFloat = weakrFloat * 0.95 + 400.0 * 0.05;
+      if(HallData[1].HallSpeed > 800 && button1) {
+        weakrFloat = weakrFloat * 0.95 + 450.0 * 0.05;
       } else {
         weakrFloat = weakrFloat * 0.95;
       }
