@@ -17,6 +17,8 @@ volatile int pwml = 0;
 volatile int pwmr = 0;
 volatile int weakl = 0;
 volatile int weakr = 0;
+volatile int overCurrentL = 0;
+volatile int overCurrentR = 0;
 
 extern volatile int speed;
 
@@ -24,6 +26,7 @@ extern volatile adc_buf_t adc_buffer;
 
 extern volatile uint32_t timeout;
 extern int disablepoweroff;
+int useBlockPWM;
 
 uint32_t buzzerFreq = 0;
 uint32_t buzzerPattern = 0;
@@ -259,7 +262,7 @@ void DMA1_Channel1_IRQHandler() {
 #endif
 
   //disable PWM when current limit is reached (current chopping)
-  if(dclAmps > DC_CUR_LIMIT || timeout > TIMEOUT || enable == 0) {
+  if(timeout > TIMEOUT || enable == 0) {
     LEFT_TIM->BDTR &= ~TIM_BDTR_MOE;
     //HAL_GPIO_WritePin(LED_PORT, LED_PIN, 1);
   } else {
@@ -267,12 +270,12 @@ void DMA1_Channel1_IRQHandler() {
     //HAL_GPIO_WritePin(LED_PORT, LED_PIN, 0);
   }
 
-  if(dcrAmps > DC_CUR_LIMIT || timeout > TIMEOUT || enable == 0) {
+  if(timeout > TIMEOUT || enable == 0) {
     RIGHT_TIM->BDTR &= ~TIM_BDTR_MOE;
   } else {
     RIGHT_TIM->BDTR |= TIM_BDTR_MOE;
   }
-
+  
   int ul, vl, wl;
   int ur, vr, wr;
 
@@ -302,7 +305,7 @@ void DMA1_Channel1_IRQHandler() {
   }
 
   //update PWM channels based on position
-  if (0){
+  if (!useBlockPWM){
     blockPWMSin(pwml, posl, fraction[0], &ul, &vl, &wl);
     blockPWMSin(pwmr, posr, fraction[1], &ur, &vr, &wr);
   } else {
@@ -331,11 +334,24 @@ void DMA1_Channel1_IRQHandler() {
   vr += weakvr;
   wr += weakwr;
 
-  LEFT_TIM->LEFT_TIM_U = CLAMP(ul + pwm_res / 2, 10, pwm_res-10);
-  LEFT_TIM->LEFT_TIM_V = CLAMP(vl + pwm_res / 2, 10, pwm_res-10);
-  LEFT_TIM->LEFT_TIM_W = CLAMP(wl + pwm_res / 2, 10, pwm_res-10);
+  if(dclAmps > DC_CUR_LIMIT) {
+    overCurrentL++;
+  } else {
+    overCurrentL--;
+  }
+  if(dcrAmps > DC_CUR_LIMIT) {
+    overCurrentR++;
+  } else {
+    overCurrentR--;
+  }
+  overCurrentL = CLAMP(overCurrentL , 0, pwm_res);
+  overCurrentR = CLAMP(overCurrentR , 0, pwm_res);
 
-  RIGHT_TIM->RIGHT_TIM_U = CLAMP(ur + pwm_res / 2, 10, pwm_res-10);
-  RIGHT_TIM->RIGHT_TIM_V = CLAMP(vr + pwm_res / 2, 10, pwm_res-10);
-  RIGHT_TIM->RIGHT_TIM_W = CLAMP(wr + pwm_res / 2, 10, pwm_res-10);
+  LEFT_TIM->LEFT_TIM_U = CLAMP(ul + (pwm_res - overCurrentL) / 2, 10, pwm_res-10);
+  LEFT_TIM->LEFT_TIM_V = CLAMP(vl + (pwm_res - overCurrentL) / 2, 10, pwm_res-10);
+  LEFT_TIM->LEFT_TIM_W = CLAMP(wl + (pwm_res - overCurrentL)/ 2, 10, pwm_res-10);
+
+  RIGHT_TIM->RIGHT_TIM_U = CLAMP(ur + (pwm_res - overCurrentR)/ 2, 10, pwm_res-10);
+  RIGHT_TIM->RIGHT_TIM_V = CLAMP(vr + (pwm_res - overCurrentR)/ 2, 10, pwm_res-10);
+  RIGHT_TIM->RIGHT_TIM_W = CLAMP(wr + (pwm_res - overCurrentR)/ 2, 10, pwm_res-10);
 }

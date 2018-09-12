@@ -45,7 +45,7 @@ void SendTelemetry() {
     } else {
       sprintf(uart_buf, "*s%i,%i*S%ld,%ld*A%i,%i*a%i*\r\n",
       speedR,speedL,
-      HallData[0].HallSpeed_mm_per_s, HallData[1].HallSpeed_mm_per_s,
+      HallData[0].HallSpeed, HallData[1].HallSpeed,
       (int)electrical_measurements.motors[0].dcAmps, (int)electrical_measurements.motors[1].dcAmps,
       (int)(electrical_measurements.motors[0].dcAmps + electrical_measurements.motors[1].dcAmps));
     }
