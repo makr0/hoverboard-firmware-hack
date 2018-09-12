@@ -204,7 +204,8 @@ int main(void) {
     // ####### MIXER #######
     steer_coefficient = steer_coefficient * (1.0 - STEER_FILTER_var) + (button2 ? BUTTON_STEER_COEFFICIENT : DEFAULT_STEER_COEFFICIENT) * STEER_FILTER_var;
     speedR = CLAMP(speed * SPEED_COEFFICIENT -  steer * steer_coefficient, -1000, 1000);
-    speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * steer_coefficient, -1000, 2000);
+    speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * steer_coefficient, -1000, 1000);
+    
 
     // ####### MODE HANDLING ############
     if (mode == 1) {  // Mode 1, slow, max SPEED MODE1_MAX_SPEED
@@ -215,13 +216,13 @@ int main(void) {
     }
     if (mode >= 2) {  // Mode 2, full speed, with turbo
       // ramp up turbo if speed over 800 and turbo button pressed
-      if(HallData[0].HallSpeed > 800 && button1) {
+      if(HallData[0].HallSpeed > 400 && button1) {
         weaklFloat = weaklFloat * 0.95 + 450.0 * 0.05;
       } else {
       // ramp down turbo if slower
         weaklFloat = weaklFloat * 0.95;
       }
-      if(HallData[1].HallSpeed > 800 && button1) {
+      if(HallData[1].HallSpeed > 400 && button1) {
         weakrFloat = weakrFloat * 0.95 + 450.0 * 0.05;
       } else {
         weakrFloat = weakrFloat * 0.95;

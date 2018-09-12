@@ -15,10 +15,12 @@ volatile int posl = 0;
 volatile int posr = 0;
 volatile int pwml = 0;
 volatile int pwmr = 0;
+volatile int pwml_limited = 0;
+volatile int pwmr_limited = 0;
 volatile int weakl = 0;
 volatile int weakr = 0;
-volatile int overCurrentL = 0;
-volatile int overCurrentR = 0;
+int overCurrentL = 0;
+int overCurrentR = 0;
 
 extern volatile int speed;
 
@@ -261,7 +263,8 @@ void DMA1_Channel1_IRQHandler() {
   }
 #endif
 
-  //disable PWM when current limit is reached (current chopping)
+
+  //disable PWM when on timeout or global disable
   if(timeout > TIMEOUT || enable == 0) {
     LEFT_TIM->BDTR &= ~TIM_BDTR_MOE;
     //HAL_GPIO_WritePin(LED_PORT, LED_PIN, 1);
@@ -304,18 +307,27 @@ void DMA1_Channel1_IRQHandler() {
       HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, 0);
   }
 
+  // soft limit current
+  #define overCurrent_P 350
+  overCurrentL = (dclAmps - DC_CUR_LIMIT) * overCurrent_P;
+  overCurrentR = (dcrAmps - DC_CUR_LIMIT) * overCurrent_P;
+
+  pwml_limited = overCurrentL > 0 ? (pwml - overCurrentL * SIGN(pwml)) : pwml;
+  pwmr_limited = overCurrentR > 0 ? (pwmr - overCurrentR * SIGN(pwmr)) : pwmr;
+  
+
   //update PWM channels based on position
   if (!useBlockPWM){
-    blockPWMSin(pwml, posl, fraction[0], &ul, &vl, &wl);
-    blockPWMSin(pwmr, posr, fraction[1], &ur, &vr, &wr);
+    blockPWMSin(pwml_limited, posl, fraction[0], &ul, &vl, &wl);
+    blockPWMSin(pwmr_limited, posr, fraction[1], &ur, &vr, &wr);
   } else {
-    blockPWM(pwml, posl, &ul, &vl, &wl);
-    blockPWM(pwmr, posr, &ur, &vr, &wr);
+    blockPWM(pwml_limited, posl, &ul, &vl, &wl);
+    blockPWM(pwmr_limited, posr, &ur, &vr, &wr);
   }
 
 
   int weakul, weakvl, weakwl;
-  if (pwml > 0) {
+  if (pwml_limited > 0) {
     blockPWM(weakl, (posl+5) % 6, &weakul, &weakvl, &weakwl);
   } else {
     blockPWM(-weakl, (posl+1) % 6, &weakul, &weakvl, &weakwl);
@@ -325,7 +337,7 @@ void DMA1_Channel1_IRQHandler() {
   wl += weakwl;
 
   int weakur, weakvr, weakwr;
-  if (pwmr > 0) {
+  if (pwmr_limited > 0) {
     blockPWM(weakr, (posr+5) % 6, &weakur, &weakvr, &weakwr);
   } else {
     blockPWM(-weakr, (posr+1) % 6, &weakur, &weakvr, &weakwr);
@@ -334,24 +346,12 @@ void DMA1_Channel1_IRQHandler() {
   vr += weakvr;
   wr += weakwr;
 
-  if(dclAmps > DC_CUR_LIMIT) {
-    overCurrentL++;
-  } else {
-    overCurrentL--;
-  }
-  if(dcrAmps > DC_CUR_LIMIT) {
-    overCurrentR++;
-  } else {
-    overCurrentR--;
-  }
-  overCurrentL = CLAMP(overCurrentL , 0, pwm_res);
-  overCurrentR = CLAMP(overCurrentR , 0, pwm_res);
 
-  LEFT_TIM->LEFT_TIM_U = CLAMP(ul + (pwm_res - overCurrentL) / 2, 10, pwm_res-10);
-  LEFT_TIM->LEFT_TIM_V = CLAMP(vl + (pwm_res - overCurrentL) / 2, 10, pwm_res-10);
-  LEFT_TIM->LEFT_TIM_W = CLAMP(wl + (pwm_res - overCurrentL)/ 2, 10, pwm_res-10);
+  LEFT_TIM->LEFT_TIM_U = CLAMP(ul + pwm_res / 2, 10, pwm_res-10);
+  LEFT_TIM->LEFT_TIM_V = CLAMP(vl + pwm_res / 2, 10, pwm_res-10);
+  LEFT_TIM->LEFT_TIM_W = CLAMP(wl + pwm_res / 2, 10, pwm_res-10);
 
-  RIGHT_TIM->RIGHT_TIM_U = CLAMP(ur + (pwm_res - overCurrentR)/ 2, 10, pwm_res-10);
-  RIGHT_TIM->RIGHT_TIM_V = CLAMP(vr + (pwm_res - overCurrentR)/ 2, 10, pwm_res-10);
-  RIGHT_TIM->RIGHT_TIM_W = CLAMP(wr + (pwm_res - overCurrentR)/ 2, 10, pwm_res-10);
+  RIGHT_TIM->RIGHT_TIM_U = CLAMP(ur + pwm_res / 2, 10, pwm_res-10);
+  RIGHT_TIM->RIGHT_TIM_V = CLAMP(vr + pwm_res / 2, 10, pwm_res-10);
+  RIGHT_TIM->RIGHT_TIM_W = CLAMP(wr + pwm_res / 2, 10, pwm_res-10);
 }
