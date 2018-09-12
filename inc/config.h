@@ -65,10 +65,15 @@
 
 // ############################### INPUT ###############################
 
-// ###### CONTROL VIA UART (serial) ######
+// ###### CONTROL VIA UART (serial) binary Protocol ######
 //#define CONTROL_SERIAL_USART2       // left sensor board cable, disable if ADC or PPM is used!
-#define CONTROL_BAUD       115200    // control via usart from eg an Arduino or raspberry
+//#define CONTROL_BAUD       115200    // control via usart from eg an Arduino or raspberry
 // for Arduino, use void loop(void){ Serial.write((uint8_t *) &steer, sizeof(steer)); Serial.write((uint8_t *) &speed, sizeof(speed));delay(20); }
+
+// ###### CONTROL VIA UART (serial) String based Protocol ######
+
+#define CONTROL_APP_USART2       // left sensor board cable, disable if ADC or PPM is used!
+#define CONTROL_BAUD       115200    // control via usart from eg an Arduino or raspberry
 
 // ###### CONTROL VIA RC REMOTE ######
 // left sensor board cable. Channel 1: steering, Channel 2: speed.

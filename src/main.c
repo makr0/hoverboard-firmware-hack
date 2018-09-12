@@ -47,11 +47,6 @@ int cmd1;  // normalized input values. -1000 to 1000
 int cmd2;
 int cmd3;
 
-typedef struct{
-   int16_t steer;
-   int16_t speed;
-   //uint32_t crc;
-} Serialcommand;
 
 volatile Serialcommand command;
 

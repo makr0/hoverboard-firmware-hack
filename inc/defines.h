@@ -158,3 +158,9 @@ typedef struct {
   uint16_t temp;
   uint16_t l_rx2;
 } adc_buf_t;
+
+typedef struct{
+   int16_t steer;
+   int16_t speed;
+   //uint32_t crc;
+} Serialcommand;

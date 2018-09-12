@@ -36,6 +36,7 @@
 #include "stm32f1xx_it.h"
 #include "config.h"
 #include "hallinterrupts.h"
+#include "comms.h"
 
 extern DMA_HandleTypeDef hdma_i2c2_rx;
 extern DMA_HandleTypeDef hdma_i2c2_tx;
@@ -227,16 +228,15 @@ void EXTI3_IRQHandler(void)
 }
 #endif
 
-#ifdef CONTROL_SERIAL_USART2
+#if defined CONTROL_SERIAL_USART2 || defined CONTROL_APP_USART2
 void DMA1_Channel6_IRQHandler(void)
 {
-  /* USER CODE BEGIN DMA1_Channel4_IRQn 0 */
-
-  /* USER CODE END DMA1_Channel4_IRQn 0 */
+  /* USER CODE BEGIN DMA1_Channel6_IRQn 0 */
+  /* USER CODE END DMA1_Channel6_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_usart2_rx);
-  /* USER CODE BEGIN DMA1_Channel4_IRQn 1 */
-
-  /* USER CODE END DMA1_Channel4_IRQn 1 */
+  /* USER CODE BEGIN DMA1_Channel6_IRQn 1 */
+  protocolByteReceived();
+  /* USER CODE END DMA1_Channel6_IRQn 1 */
 }
 
 /**
