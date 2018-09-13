@@ -59,6 +59,11 @@ void SendTelemetry() {
     telemetryTimer++;
 }
 
+
+/**
+ * receive one character at a time
+ * weird workaround needed: every character is received twice
+ */
 #ifdef CONTROL_APP_USART2
 void protocolByteReceived() {
     switch(protocolStatus.state) {
@@ -89,14 +94,9 @@ void protocolByteReceived() {
     }
 }
 
-void process_message(char *message) {
-    if(UART_DMA_CHANNEL->CNDTR == 0) {
-      UART_DMA_CHANNEL->CCR &= ~DMA_CCR_EN;
-      UART_DMA_CHANNEL->CNDTR = strlen(message);
-      UART_DMA_CHANNEL->CMAR  = (uint32_t)message;
-      UART_DMA_CHANNEL->CCR |= DMA_CCR_EN;
-    }
-}
+/**
+ * send message back, if rx buffer full
+ */
 void process_message_overflow() {
     memset(uart_buf, 0, sizeof(uart_buf));
     sprintf(uart_buf, "Message buffer overrun. try sending %c\r\n", PROTOCOL_EOM);
@@ -107,4 +107,39 @@ void process_message_overflow() {
       UART_DMA_CHANNEL->CCR |= DMA_CCR_EN;
     }
 }
+
+/**
+ * interpret command and execute
+ * possible commands (examples shown with StartChar=! and end char=. then are not included in message)
+ * 
+ * Setup/Tuning Commands, sent once per value change
+ * 
+ * PID commands. each component (P,I,D) can be omitted. Values are stored as integer
+ * !ovrcP1234,I42,D23.      set overcurrentPID to P=1234 I=42 D=23
+ * !speedP1234,I42,D23.     set speedPID to P=1234 I=42 D=23
+ * 
+ * driving coefficients. are divided by 100 and stored as float values between 0 and 1
+ * !speedC63.               set speed coefficient to 0.63
+ * !steerC50.               set steer coefficient to 0.5
+ * 
+ * simple values. are stored as integers
+ * !maxcV20.                set max overall current to 20A (10A per motor)
+ * !cellN10.                set number of Cells to 10 (equals BAT_NUMBER_OF_CELLS on startup)
+ *
+ * Driving Commands, must be received at least 2 times per second, else motors are stoppen (speeed=0, steer=0)
+ * Values are stored as integer
+ * !speedV100.              set speed value to 100. max=1000
+ * !steerV100.              set steer value to 100. max=1000
+ */
+
+void process_message(char *message) {
+  // send received message back
+  if(UART_DMA_CHANNEL->CNDTR == 0) {
+    UART_DMA_CHANNEL->CCR &= ~DMA_CCR_EN;
+    UART_DMA_CHANNEL->CNDTR = strlen(message);
+    UART_DMA_CHANNEL->CMAR  = (uint32_t)message;
+    UART_DMA_CHANNEL->CCR |= DMA_CCR_EN;
+  }
+}
+
 #endif
