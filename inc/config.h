@@ -20,12 +20,12 @@
 
 #define BAT_NUMBER_OF_CELLS     10        // normal Hoverboard battery: 10s
 #define BAT_LOW_LVL1_ENABLE     1         // to beep or not to beep, 1 or 0
-#define BAT_LOW_LVL1            3.6       // gently beeps at this voltage level. [V/cell]
+#define BAT_LOW_LVL1            3.5       // gently beeps at this voltage level. [V/cell]
 #define BAT_LOW_LVL2_ENABLE     1         // to beep or not to beep, 1 or 0
-#define BAT_LOW_LVL2            3.5       // your battery is almost empty. Charge now! [V/cell]
-#define BAT_LOW_DEAD            3.37      // undervoltage poweroff. (while not driving) [V/cell]
+#define BAT_LOW_LVL2            3.4       // your battery is almost empty. Charge now! [V/cell]
+#define BAT_LOW_DEAD            3.3       // undervoltage poweroff. (while not driving) [V/cell]
 
-#define DC_CUR_LIMIT     15         // DC current limit in amps per motor. so 15 means it will draw 30A out of your battery. it does not disable motors, it is a soft current limit.
+#define DC_CUR_LIMIT     14         // DC current limit in amps per motor. so 15 means it will draw 30A out of your battery. it does not disable motors, it is a soft current limit.
 
 #define SOUND_DELAY_UP 80   // how fast is the startup sound
 #define SOUND_DELAY_DOWN 100 // how fast is the shutdown sound
@@ -110,8 +110,6 @@
 #define BUTTON_STEER_COEFFICIENT   0.9  // steer coefficient while button2 pressed
 #define INVERT_R_DIRECTION
 #define INVERT_L_DIRECTION
-#define MODE1_MAX_SPEED 500
-#define MODE2_MAX_SPEED 1000
 #define BEEPS_BACKWARD 0    // 0 or 1
 
 // ############################### VALIDATE SETTINGS ###############################
@@ -135,3 +133,29 @@
 #if defined CONTROL_PPM && defined CONTROL_ADC && defined CONTROL_NUNCHUCK || defined CONTROL_PPM && defined CONTROL_ADC || defined CONTROL_ADC && defined CONTROL_NUNCHUCK || defined CONTROL_PPM && defined CONTROL_NUNCHUCK
   #error only 1 input method allowed. use CONTROL_PPM or CONTROL_ADC or CONTROL_NUNCHUCK.
 #endif
+
+// ######################### Structure to make store runtime config ###########################
+
+typedef struct tag_PID_set {
+    int P;
+    int I;
+    int D;
+} PID_set;
+
+typedef struct tag_dynamicConfig_struct{
+    int currentLimit; // global, split to two motors
+    int cellNumber; // Number of cells in battery
+    PID_set overcurrent;
+    PID_set speed;
+    float steerCoeff;
+    float speedCoeff;
+    float steerFilter;
+    float speedFilter;
+    int turboMinSpeed;
+    int turboMaxWeak;
+    int maxSpeed;
+    int maxCurrent;
+} dynamicConfig_struct;
+volatile dynamicConfig_struct dynamicConfig;
+
+void initializeConfigValues();

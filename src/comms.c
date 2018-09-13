@@ -7,6 +7,11 @@
 #include "comms.h"
 #include "bldc.h"
 #include "hallinterrupts.h"
+#include "beeper.h"
+#include "control.h"
+#include <string.h>
+#include <stdlib.h>
+
 volatile ELECTRICAL_PARAMS electrical_measurements;
 
 UART_HandleTypeDef huart2;
@@ -36,14 +41,21 @@ extern int speedR; // output speed: 0-1000
 extern int speedL; // output speed: 0-1000
 
 
-void SendTelemetry() {
+void SendTelemetry(int now) {
     memset(uart_buf, 0, sizeof(uart_buf));
-    if (telemetryTimer %20 == 0) {  // send voltage and Temperature only every 20th time this function is called
-      sprintf(uart_buf, "*V%i*T%i*M%i*C%i*\r\n",
-      (int)(electrical_measurements.batteryVoltage*100), (int)electrical_measurements.board_temp_deg_c,mode,
-      electrical_measurements.charging);
+    if (telemetryTimer %20 == 0 || now) {  // send voltage and Temperature only every 20th time this function is called
+      sprintf(uart_buf,
+      "*V%i*T%i*M%i*C%i*\r\n"
+      "*c%i*o%i*\r\n"
+      "*z%i*Z%i*\r\n"
+      "*y%i*Y%i*\r\n",
+      (int)(electrical_measurements.batteryVoltage*100), (int)electrical_measurements.board_temp_deg_c,mode,electrical_measurements.charging,
+      dynamicConfig.maxCurrent, dynamicConfig.overcurrent.P,
+      (int)(dynamicConfig.speedFilter * 1000),(int)(dynamicConfig.steerFilter * 1000),
+      (int)(dynamicConfig.speedCoeff * 100), (int)(dynamicConfig.steerCoeff * 100));
+      
     } else {
-      sprintf(uart_buf, "*s%i,%i*S%ld*AX%iY%i*a%i*\r\n",
+      sprintf(uart_buf, "*s%i,%i*S%ld*AX%iY%i*a%i*\n",
       speedR,speedL,
       HallData[0].HallSpeed + HallData[1].HallSpeed,
       (int)electrical_measurements.motors[0].dcAmps, (int)electrical_measurements.motors[1].dcAmps,
@@ -110,36 +122,87 @@ void process_message_overflow() {
 
 /**
  * interpret command and execute
- * possible commands (examples shown with StartChar=! and end char=. then are not included in message)
+ * possible commands (examples shown with StartChar=! and end char=. they are not included in message)
  * 
  * Setup/Tuning Commands, sent once per value change
  * 
  * PID commands. each component (P,I,D) can be omitted. Values are stored as integer
- * !ovrcP1234,I42,D23.      set overcurrentPID to P=1234 I=42 D=23
- * !speedP1234,I42,D23.     set speedPID to P=1234 I=42 D=23
+ * !ovrcP1234.!ovrcI42.!ovrcD23.    set overcurrentPID to P=1234 I=42 D=23
+ * !speedP1234.!speedI42.!speedD23. set speedPID to P=1234 I=42 D=23
  * 
  * driving coefficients. are divided by 100 and stored as float values between 0 and 1
  * !speedC63.               set speed coefficient to 0.63
  * !steerC50.               set steer coefficient to 0.5
+ * !speedF63.               set speed filter to 0.063 (factor1000!)
+ * !steerF50.               set steer filter to 0.05 (factor1000!)
  * 
  * simple values. are stored as integers
- * !maxcV20.                set max overall current to 20A (10A per motor)
+ * !maxcN20.                set max overall current to 20A (10A per motor)
  * !cellN10.                set number of Cells to 10 (equals BAT_NUMBER_OF_CELLS on startup)
+ * !modeN2.                 set mode number to '2'
  *
- * Driving Commands, must be received at least 2 times per second, else motors are stoppen (speeed=0, steer=0)
+ * Driving Commands, must be received at least 2 times per second, else motors are stopped (speeed=0, steer=0)
  * Values are stored as integer
  * !speedV100.              set speed value to 100. max=1000
  * !steerV100.              set steer value to 100. max=1000
  */
 
 void process_message(char *message) {
-  // send received message back
-  if(UART_DMA_CHANNEL->CNDTR == 0) {
-    UART_DMA_CHANNEL->CCR &= ~DMA_CCR_EN;
-    UART_DMA_CHANNEL->CNDTR = strlen(message);
-    UART_DMA_CHANNEL->CMAR  = (uint32_t)message;
-    UART_DMA_CHANNEL->CCR |= DMA_CCR_EN;
+
+  // MODE
+  if(strStartsWith("modeN", message)) {
+    mode = atoi(message+strlen("modeN"));
+    initializeConfigValues();
+    beep(mode);
   }
+
+  // max Current
+  if(strStartsWith("maxcN", message)) dynamicConfig.maxCurrent = atoi(message+strlen("maxcN")) / 2;
+  // overcurrent PID
+  if(strStartsWith("ovrcP", message)) dynamicConfig.overcurrent.P = atoi(message+strlen("ovrcP"));
+  // steering coeff
+  if(strStartsWith("steerC", message)) dynamicConfig.steerCoeff = atoi(message+strlen("steerC")) / 100.0;
+  // speed coeff
+  if(strStartsWith("speedC", message)) dynamicConfig.speedCoeff = atoi(message+strlen("speedC")) / 100.0;
+
+  // steering filter
+  if(strStartsWith("steerF", message)) dynamicConfig.steerFilter = atoi(message+strlen("steerF")) / 1000.0;
+  // speed filter
+  if(strStartsWith("speedF", message)) dynamicConfig.speedFilter = atoi(message+strlen("speedF")) / 1000.0;
+
+  // DRIVING CONTROL
+  if(strStartsWith("steerV", message) || strStartsWith("speedV", message) || strStartsWith("stkX", message)) {
+    remoteControl.lastCommandTick = HAL_GetTick();
+    // steering
+    if(strStartsWith("steerV", message)) remoteControl.steer = atoi(message+strlen("steerV"));
+    // speed
+    if(strStartsWith("speedV", message)) remoteControl.speed = atoi(message+strlen("speedV"));
+    if(strStartsWith("stkX", message)) {
+      char xstr[10], ystr[10];
+      int xStart=0, yStart=0, i;
+      for(i=0;i<strlen(message);i++) {
+          if(message[i]=='X') xStart = i+1;
+          if(message[i]=='Y') yStart = i+1;
+      }
+      for( i=0;i<yStart-xStart-1;i++) {
+          xstr[i]=message[i+xStart];
+      }
+      xstr[i]=0;
+      for( i=0;i<strlen(message)-yStart;i++) {
+          ystr[i]=message[i+yStart];
+      }
+      ystr[i]=0;
+      remoteControl.speed = - atoi(ystr);
+      remoteControl.steer = atoi(xstr);
+    }
+  } 
+
+
+  SendTelemetry(1);
 }
 
+int strStartsWith(char *pre, char *str)
+{
+    return strncmp(pre, str, strlen(pre)) == 0;
+}
 #endif

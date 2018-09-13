@@ -308,9 +308,9 @@ void DMA1_Channel1_IRQHandler() {
   }
 
   // soft limit current
-  #define overCurrent_P 350
-  overCurrentL = (dclAmps - DC_CUR_LIMIT) * overCurrent_P;
-  overCurrentR = (dcrAmps - DC_CUR_LIMIT) * overCurrent_P;
+  
+  overCurrentL = (dclAmps - dynamicConfig.maxCurrent) * dynamicConfig.overcurrent.P;
+  overCurrentR = (dcrAmps - dynamicConfig.maxCurrent) * dynamicConfig.overcurrent.P;
 
   pwml_limited = overCurrentL > 0 ? (pwml - overCurrentL * SIGN(pwml)) : pwml;
   pwmr_limited = overCurrentR > 0 ? (pwmr - overCurrentR * SIGN(pwmr)) : pwmr;

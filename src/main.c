@@ -54,7 +54,6 @@ uint8_t button1, button2;
 
 int steer; // global variable for steering. -1000 to 1000
 int speed; // global variable for speed. -1000 to 1000
-float steer_coefficient = DEFAULT_STEER_COEFFICIENT; // steering strength. is changed on button press
 
 extern volatile int pwml;  // global variable for pwm left. -1000 to 1000
 extern volatile int pwmr;  // global variable for pwm right. -1000 to 1000
@@ -64,8 +63,8 @@ extern int useBlockPWM;
 
 float weakrFloat;  // for ramping up Turbo
 float weaklFloat;  // for ramping up Turbo
-float FILTER_var = FILTER; // variable speed input filter
-float STEER_FILTER_var = STEER_FILTER; // variable steering input filter
+
+extern volatile dynamicConfig_struct dynamicConfig;
 
 extern uint8_t buzzerFreq;    // global variable for the buzzer pitch. can be 1, 2, 3, 4, 5, 6, 7...
 extern uint8_t buzzerPattern; // global variable for the buzzer pattern. can be 1, 2, 3, 4, 5, 6, 7...
@@ -128,6 +127,11 @@ int main(void) {
     HallInterruptinit();
   #endif
 
+  initializeConfigValues();
+  #ifdef CONTROL_APP_USART2
+    remoteControl_Init();
+  #endif
+
   for (int i = 8; i >= 3; i--) {
     buzzerFreq = i;
     HAL_Delay(SOUND_DELAY_UP);
@@ -142,8 +146,8 @@ int main(void) {
 
   mode = startupModeSelect();
   if(mode == 3) {
-    STEER_FILTER_var = 0.5;
-    FILTER_var = 0.2;
+    dynamicConfig.steerFilter = 0.5;
+    dynamicConfig.speedFilter = 0.2;
   }
 
   while(1) {
@@ -156,6 +160,13 @@ int main(void) {
 
       button1 = (uint8_t) (nunchuck_data[5]       & 1) ^ 1;
       button2 = (uint8_t)((nunchuck_data[5] >> 1) & 1) ^ 1;
+    #endif
+
+    #ifdef CONTROL_APP_USART2
+      if(remoteControl.lastCommandTick + remoteControl.maxInterval > HAL_GetTick()  ) {
+        cmd1 = CLAMP(remoteControl.steer, -1000, 1000);
+        cmd2 = CLAMP(remoteControl.speed, -1000, 1000);
+      }
     #endif
 
     #ifdef CONTROL_PPM
@@ -197,39 +208,35 @@ int main(void) {
 
 
     // ####### LOW-PASS FILTER #######
-    steer = steer * (1.0 - STEER_FILTER_var) + cmd1 * STEER_FILTER_var;
-    speed = speed * (1.0 - FILTER_var) + cmd2 * FILTER_var;
+    steer = steer * (1.0 - dynamicConfig.steerFilter) + cmd1 * dynamicConfig.steerFilter;
+    speed = speed * (1.0 - dynamicConfig.speedFilter) + cmd2 * dynamicConfig.speedFilter;
 
 
     // ####### MIXER #######
-    steer_coefficient = steer_coefficient * (1.0 - STEER_FILTER_var) + (button2 ? BUTTON_STEER_COEFFICIENT : DEFAULT_STEER_COEFFICIENT) * STEER_FILTER_var;
-    speedR = CLAMP(speed * SPEED_COEFFICIENT -  steer * steer_coefficient, -1000, 1000);
-    speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * steer_coefficient, -1000, 1000);
+    float steer_coefficient = steer_coefficient * (1.0 - dynamicConfig.steerFilter) + (button2 ? BUTTON_STEER_COEFFICIENT : DEFAULT_STEER_COEFFICIENT) * dynamicConfig.steerFilter;
+    speedR = CLAMP(speed * dynamicConfig.speedCoeff -  steer * dynamicConfig.steerCoeff, -1000, 1000);
+    speedL = CLAMP(speed * dynamicConfig.speedCoeff +  steer * dynamicConfig.steerCoeff, -1000, 1000);
     
 
-    // ####### MODE HANDLING ############
-    if (mode == 1) {  // Mode 1, slow, max SPEED MODE1_MAX_SPEED
-      speedR = CLAMP(speedR, -MODE1_MAX_SPEED, MODE1_MAX_SPEED);
-      speedL = CLAMP(speedL, -MODE1_MAX_SPEED, MODE1_MAX_SPEED);
-      weakl = 0;
-      weakr = 0;
+    // ####### SPEED LIMITER ############
+    speedR = CLAMP(speedR, -dynamicConfig.maxSpeed, dynamicConfig.maxSpeed);
+    speedL = CLAMP(speedL, -dynamicConfig.maxSpeed, dynamicConfig.maxSpeed);
+
+    // ####### TURBO ############
+    // ramp up turbo if speed over minimum speed and turbo button pressed
+    if(HallData[0].HallSpeed > dynamicConfig.turboMinSpeed && button1) {
+      weaklFloat = weaklFloat * 0.95 + dynamicConfig.turboMaxWeak * 0.05;
+    } else {
+    // ramp down turbo if slower
+      weaklFloat = weaklFloat * 0.95;
     }
-    if (mode >= 2) {  // Mode 2, full speed, with turbo
-      // ramp up turbo if speed over 800 and turbo button pressed
-      if(HallData[0].HallSpeed > 400 && button1) {
-        weaklFloat = weaklFloat * 0.95 + 450.0 * 0.05;
-      } else {
-      // ramp down turbo if slower
-        weaklFloat = weaklFloat * 0.95;
-      }
-      if(HallData[1].HallSpeed > 400 && button1) {
-        weakrFloat = weakrFloat * 0.95 + 450.0 * 0.05;
-      } else {
-        weakrFloat = weakrFloat * 0.95;
-      }
-      weakl = (int)weaklFloat;
-      weakr = (int)weakrFloat;
+    if(HallData[1].HallSpeed > dynamicConfig.turboMinSpeed && button1) {
+      weakrFloat = weakrFloat * 0.95 + dynamicConfig.turboMaxWeak * 0.05;
+    } else {
+      weakrFloat = weakrFloat * 0.95;
     }
+    weakl = (int)weaklFloat;
+    weakr = (int)weakrFloat;
 
 
     // ####### SET OUTPUTS #######
@@ -251,7 +258,7 @@ int main(void) {
 
 
     if (inactivity_timeout_counter % 25 == 0) {
-        SendTelemetry();
+        SendTelemetry(0);
     }
 
 

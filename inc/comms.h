@@ -8,7 +8,7 @@
 #define UART_DMA_CHANNEL DMA1_Channel7
 #endif
 
-void SendTelemetry();
+void SendTelemetry(int now);
 
 #ifdef CONTROL_APP_USART2
     void protocolByteReceived();
@@ -20,3 +20,5 @@ void SendTelemetry();
     #define PROTOCOL_SOM '!'
     #define PROTOCOL_EOM '.'
 #endif
+
+int strStartsWith(char *pre, char *str);

@@ -3,6 +3,7 @@
 #include "defines.h"
 #include "setup.h"
 #include "config.h"
+#include "control.h"
 #include <stdbool.h>
 #include <string.h>
 
@@ -113,9 +114,9 @@ void Nunchuck_Read() {
     HAL_Delay(50);
     Nunchuck_Init();
   }
+}
 
-  //setScopeChannel(0, (int)nunchuck_data[0]);
-  //setScopeChannel(1, (int)nunchuck_data[1]);
-  //setScopeChannel(2, (int)nunchuck_data[5] & 1);
-  //setScopeChannel(3, ((int)nunchuck_data[5] >> 1) & 1);
+void remoteControl_Init() {
+  remoteControl.maxInterval = DELAY_IN_MAIN_LOOP * 100;
+  remoteControl.lastCommandTick = 0;
 }
