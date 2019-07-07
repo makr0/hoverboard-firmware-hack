@@ -7,7 +7,7 @@ void initializeConfigValues() {
     dynamicConfig.steerCoeff = DEFAULT_STEER_COEFFICIENT;
     dynamicConfig.speedCoeff = SPEED_COEFFICIENT;
     dynamicConfig.maxCurrent = DC_CUR_LIMIT;
-    dynamicConfig.overcurrent.P = 600;
+    dynamicConfig.overcurrent.P = 18000;
 
     dynamicConfig.maxSpeed = 1000;
     dynamicConfig.turboMinSpeed = 450;
