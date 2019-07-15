@@ -18,9 +18,6 @@ typedef struct tag_ELECTRICAL_PARAMS{
         float dcAmps;
         float dcAmpsAvgAcc;
         float dcAmpsAvg;
-        int r1;
-        int r2;
-        int q;
     } motors[2];
 
 } ELECTRICAL_PARAMS;

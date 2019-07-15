@@ -4,6 +4,7 @@
 #include "setup.h"
 #include "config.h"
 #include "control.h"
+#include "bldc.h"
 #include <stdbool.h>
 #include <string.h>
 
@@ -13,6 +14,10 @@ uint32_t timeout = 100;
 uint8_t nunchuck_data[6] = {0};
 
 uint8_t i2cBuffer[2];
+extern uint8_t buzzerFreq;    // global variable for the buzzer pitch. can be 1, 2, 3, 4, 5, 6, 7...
+extern uint8_t buzzerPattern; // global variable for the buzzer pattern. can be 1, 2, 3, 4, 5, 6, 7...
+
+extern uint8_t enable; // global variable for motor enable
 
 extern I2C_HandleTypeDef hi2c2;
 DMA_HandleTypeDef hdma_i2c2_rx;
@@ -86,7 +91,7 @@ void PPM_Init() {
 #endif
 
 void Nunchuck_Init() {
-    //-- START -- init WiiNunchuck
+  //-- START -- init WiiNunchuck
   i2cBuffer[0] = 0xF0;
   i2cBuffer[1] = 0x55;
 
@@ -98,6 +103,9 @@ void Nunchuck_Init() {
 
   HAL_I2C_Master_Transmit(&hi2c2,0xA4,(uint8_t*)i2cBuffer, 2, 100);
   HAL_Delay(10);
+  // reset nunchuck data to neutral values
+  nunchuck_data[0]=128;
+  nunchuck_data[1]=128;
 }
 
 void Nunchuck_Read() {
@@ -110,8 +118,14 @@ void Nunchuck_Read() {
     timeout++;
   }
 
+  // if reading from nunchuck was unsuccessful 3 time
+  // try to reset it
   if (timeout > 3) {
+    // reset nunchuck data to neutral values
+    nunchuck_data[0]=128;
+    nunchuck_data[1]=128;
     HAL_Delay(50);
+    // re-initiialize Nunchuck
     Nunchuck_Init();
   }
 }
@@ -119,4 +133,18 @@ void Nunchuck_Read() {
 void remoteControl_Init() {
   remoteControl.maxInterval = DELAY_IN_MAIN_LOOP * 100;
   remoteControl.lastCommandTick = 0;
+}
+
+void poweroff() {
+    buzzerPattern = 0;
+    enable = 0;
+    for (int i = 2; i <= 10; i++) {
+      buzzerFreq = i;
+      HAL_Delay(SOUND_DELAY_DOWN);
+    }
+    buzzerFreq = 0;
+    HAL_Delay(SOUND_DELAY_DOWN*10);
+
+    HAL_GPIO_WritePin(OFF_PORT, OFF_PIN, 0);
+    while(1) {}
 }

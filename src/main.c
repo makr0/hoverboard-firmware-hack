@@ -23,15 +23,35 @@
 #include "defines.h"
 #include "setup.h"
 #include "beeper.h"
-#include "startup.h"
+#include "operationmode.h"
 #include "comms.h"
 #include "control.h"
 #include "config.h"
 #include "bldc.h"
-#include "hallinterrupts.h"
-//#include "hd44780.h"
-
 #include <memory.h>
+
+// Matlab includes and defines - from auto-code generation
+// ###############################################################################
+#include "BLDC_controller.h"            /* Model's header file */
+#include "rtwtypes.h"
+
+RT_MODEL rtM_Left_;    /* Real-time model */
+RT_MODEL rtM_Right_;   /* Real-time model */
+RT_MODEL *const rtM_Left = &rtM_Left_;
+RT_MODEL *const rtM_Right = &rtM_Right_;
+
+P rtP;                           /* Block parameters (auto storage) */
+
+DW rtDW_Left;                    /* Observable states */
+ExtU rtU_Left;                   /* External inputs */
+ExtY rtY_Left;                   /* External outputs */
+
+DW rtDW_Right;                   /* Observable states */
+ExtU rtU_Right;                  /* External inputs */
+ExtY rtY_Right;                  /* External outputs */
+// ###############################################################################
+
+
 void SystemClock_Config(void);
 
 extern TIM_HandleTypeDef htim_left;
@@ -39,7 +59,6 @@ extern TIM_HandleTypeDef htim_right;
 extern ADC_HandleTypeDef hadc1;
 extern ADC_HandleTypeDef hadc2;
 extern volatile adc_buf_t adc_buffer;
-//LCD_PCF8574_HandleTypeDef lcd;
 extern I2C_HandleTypeDef hi2c2;
 extern UART_HandleTypeDef huart2;
 
@@ -47,9 +66,7 @@ int cmd1;  // normalized input values. -1000 to 1000
 int cmd2;
 int cmd3;
 
-
 volatile Serialcommand command;
-
 uint8_t button1, button2;
 
 int steer; // global variable for steering. -1000 to 1000
@@ -57,12 +74,6 @@ int speed; // global variable for speed. -1000 to 1000
 
 extern volatile int pwml;  // global variable for pwm left. -1000 to 1000
 extern volatile int pwmr;  // global variable for pwm right. -1000 to 1000
-extern volatile int weakl; // global variable for field weakening left. -1000 to 1000
-extern volatile int weakr; // global variable for field weakening right. -1000 to 1000
-extern int useBlockPWM;
-
-float weakrFloat;  // for ramping up Turbo
-float weaklFloat;  // for ramping up Turbo
 
 extern volatile dynamicConfig_struct dynamicConfig;
 
@@ -70,11 +81,9 @@ extern uint8_t buzzerFreq;    // global variable for the buzzer pitch. can be 1,
 extern uint8_t buzzerPattern; // global variable for the buzzer pattern. can be 1, 2, 3, 4, 5, 6, 7...
 
 extern uint8_t enable; // global variable for motor enable
-
 extern volatile uint32_t timeout; // global variable for timeout
-int speedL = 0, speedR = 0;
+int speedL = 0, speedR = 0, speedL_regulated, speedR_regulated;
 float board_temp_deg_c;
-int8_t mode;
 
 uint32_t inactivity_timeout_counter;
 
@@ -85,24 +94,8 @@ extern volatile uint16_t ppm_captured_value[PPM_NUM_CHANNELS+1];
 
 int milli_vel_error_sum = 0;
 
-
-void poweroff() {
-    buzzerPattern = 0;
-    enable = 0;
-    buzzerFreq = 6;
-    HAL_Delay(SOUND_DELAY_DOWN);
-    buzzerFreq = 0;
-    HAL_Delay(SOUND_DELAY_DOWN);
-    buzzerFreq = 8;
-    HAL_Delay(SOUND_DELAY_DOWN);
-    buzzerFreq = 0;
-
-    HAL_GPIO_WritePin(OFF_PORT, OFF_PIN, 0);
-    while(1) {}
-}
-
-
 int main(void) {
+  initializeConfigValues(0);
   HAL_Init();
   Interrupts_Config();
   SystemClock_Config();
@@ -122,17 +115,39 @@ int main(void) {
   HAL_ADC_Start(&hadc1);
   HAL_ADC_Start(&hadc2);
 
-  #ifdef HALL_INTERRUPTS
-    // enables interrupt reading of hall sensors for dead reconing wheel position.
-    HallInterruptinit();
-  #endif
+  // Matlab Init
+// ###############################################################################
+  
+  /* Set BLDC controller parameters */  
+  rtP.z_ctrlTypSel        = CTRL_TYP_SEL;
+  rtP.b_phaAdvEna         = PHASE_ADV_ENA;  
+  
+  /* Pack LEFT motor data into RTM */
+  rtM_Left->defaultParam  = &rtP;
+  rtM_Left->dwork         = &rtDW_Left;
+  rtM_Left->inputs        = &rtU_Left;
+  rtM_Left->outputs       = &rtY_Left;
 
-  initializeConfigValues();
+  /* Pack RIGHT motor data into RTM */
+  rtM_Right->defaultParam = &rtP;
+  rtM_Right->dwork        = &rtDW_Right;
+  rtM_Right->inputs       = &rtU_Right;
+  rtM_Right->outputs      = &rtY_Right;
+
+  /* Initialize BLDC controllers */
+  BLDC_controller_initialize(rtM_Left);
+  BLDC_controller_initialize(rtM_Right);
+
+// ###############################################################################
+ // PID controller init
+
+
+
   #ifdef CONTROL_APP_USART2
     remoteControl_Init();
   #endif
 
-  for (int i = 8; i >= 3; i--) {
+  for (int i = 10; i >= 2; i--) {
     buzzerFreq = i;
     HAL_Delay(SOUND_DELAY_UP);
   }
@@ -140,15 +155,11 @@ int main(void) {
 
   HAL_GPIO_WritePin(LED_PORT, LED_PIN, 1);
 
-  int lastSpeedL = 0, lastSpeedR = 0;
   float board_temp_adc_filtered = (float)adc_buffer.temp;
   float batteryVoltage; // global variable for battery voltage
 
-  mode = startupModeSelect();
-  if(mode == 3) {
-    dynamicConfig.steerFilter = 0.5;
-    dynamicConfig.speedFilter = 0.2;
-  }
+  startupModeSelect();
+  enable = 1;
 
   while(1) {
     HAL_Delay(DELAY_IN_MAIN_LOOP); //delay in ms
@@ -166,6 +177,7 @@ int main(void) {
       if(remoteControl.lastCommandTick + remoteControl.maxInterval > HAL_GetTick()  ) {
         cmd1 = CLAMP(remoteControl.steer, -1000, 1000);
         cmd2 = CLAMP(remoteControl.speed, -1000, 1000);
+        timeout = 0;
       }
     #endif
 
@@ -194,6 +206,10 @@ int main(void) {
 
       timeout = 0;
     #endif
+    // if button pressed, change operation mode
+    if(button1||button2) {
+        runtimeModeSelect(button1 ? 1: (button2 ? -1:0) );
+    }
     // ####### CALC BOARD TEMPERATURE #######
     board_temp_adc_filtered = board_temp_adc_filtered * 0.99 + (float)adc_buffer.temp * 0.01;
     board_temp_deg_c = ((float)TEMP_CAL_HIGH_DEG_C - (float)TEMP_CAL_LOW_DEG_C) / ((float)TEMP_CAL_HIGH_ADC - (float)TEMP_CAL_LOW_ADC) * (board_temp_adc_filtered - (float)TEMP_CAL_LOW_ADC) + (float)TEMP_CAL_LOW_DEG_C;
@@ -204,63 +220,48 @@ int main(void) {
     electrical_measurements.board_temp_deg_c = board_temp_deg_c;
     electrical_measurements.charging = !(CHARGER_PORT->IDR & CHARGER_PIN);
 
-    useBlockPWM = !button2;
-
-
     // ####### LOW-PASS FILTER #######
     steer = steer * (1.0 - dynamicConfig.steerFilter) + cmd1 * dynamicConfig.steerFilter;
     speed = speed * (1.0 - dynamicConfig.speedFilter) + cmd2 * dynamicConfig.speedFilter;
 
 
     // ####### MIXER #######
-    float steer_coefficient = steer_coefficient * (1.0 - dynamicConfig.steerFilter) + (button2 ? BUTTON_STEER_COEFFICIENT : DEFAULT_STEER_COEFFICIENT) * dynamicConfig.steerFilter;
     speedR = CLAMP(speed * dynamicConfig.speedCoeff -  steer * dynamicConfig.steerCoeff, -1000, 1000);
     speedL = CLAMP(speed * dynamicConfig.speedCoeff +  steer * dynamicConfig.steerCoeff, -1000, 1000);
     
 
+
+    // PID step for motors
+    if(dynamicConfig.regulateSpeed) {
+      speedL_regulated = PIDController_step(speedL,-rtY_Left.n_mot*2,dynamicConfig.speedL,pidRuntime_speedL);
+      speedR_regulated = PIDController_step(speedR,-rtY_Right.n_mot*2,dynamicConfig.speedR,pidRuntime_speedR);
+    } else {
+      speedL_regulated = speedL;
+      speedR_regulated = speedR;
+    }
     // ####### SPEED LIMITER ############
-    speedR = CLAMP(speedR, -dynamicConfig.maxSpeed, dynamicConfig.maxSpeed);
-    speedL = CLAMP(speedL, -dynamicConfig.maxSpeed, dynamicConfig.maxSpeed);
-
-    // ####### TURBO ############
-    // ramp up turbo if speed over minimum speed and turbo button pressed
-    if(HallData[0].HallSpeed > dynamicConfig.turboMinSpeed && button1) {
-      weaklFloat = weaklFloat * 0.95 + dynamicConfig.turboMaxWeak * 0.05;
+    speedR_regulated = CLAMP(speedR_regulated, -dynamicConfig.maxSpeed, dynamicConfig.maxSpeed);
+    speedL_regulated = CLAMP(speedL_regulated, -dynamicConfig.maxSpeed, dynamicConfig.maxSpeed);
+    // disable output if charging
+    if (electrical_measurements.charging ) {
+      pwml=0;pwmr=0;
     } else {
-    // ramp down turbo if slower
-      weaklFloat = weaklFloat * 0.95;
-    }
-    if(HallData[1].HallSpeed > dynamicConfig.turboMinSpeed && button1) {
-      weakrFloat = weakrFloat * 0.95 + dynamicConfig.turboMaxWeak * 0.05;
-    } else {
-      weakrFloat = weakrFloat * 0.95;
-    }
-    weakl = (int)weaklFloat;
-    weakr = (int)weakrFloat;
-
-
-    // ####### SET OUTPUTS #######
-    if ((speedL < lastSpeedL + 50 && speedL > lastSpeedL - 50) && (speedR < lastSpeedR + 50 && speedR > lastSpeedR - 50) && timeout < TIMEOUT) {
-    #ifdef INVERT_R_DIRECTION
-      pwmr = speedR;
-    #else
-      pwmr = -speedR;
-    #endif
-    #ifdef INVERT_L_DIRECTION
-      pwml = -speedL;
-    #else
-      pwml = speedL;
-    #endif
+      // ####### SET OUTPUTS #######
+      #ifdef INVERT_R_DIRECTION
+        pwmr = speedR_regulated;
+      #else
+        pwmr = -speedR_regulated;
+      #endif
+      #ifdef INVERT_L_DIRECTION
+        pwml = -speedL_regulated;
+      #else
+        pwml = speedL_regulated;
+      #endif
     }
 
-    lastSpeedL = speedL;
-    lastSpeedR = speedR;
-
-
-    if (inactivity_timeout_counter % 25 == 0) {
+    if (inactivity_timeout_counter % 5 == 0) {
         SendTelemetry(0);
     }
-
 
     // ####### POWEROFF BY POWER-BUTTON #######
     if (HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN)) {
@@ -268,8 +269,6 @@ int main(void) {
       while (HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN)) {}
       poweroff();
     }
-
-
 
     // ####### BEEP AND EMERGENCY POWEROFF #######
     if ((TEMP_POWEROFF_ENABLE && board_temp_deg_c >= TEMP_POWEROFF && ABS(speed) < 20) || (batteryVoltage < ((float)BAT_LOW_DEAD * (float)BAT_NUMBER_OF_CELLS) && ABS(speed) < 20)) {  // poweroff before mainboard burns OR low bat 3
@@ -286,6 +285,9 @@ int main(void) {
     } else if (BEEPS_BACKWARD && speed < -50) {  // backward beep
       buzzerFreq = 5;
       buzzerPattern = 1;
+    } else if (electrical_measurements.charging && speed!=0) { // error beep when charging and speed not null
+      buzzerFreq=80;
+      buzzerPattern=0;
     } else {  // do not beep
       buzzerFreq = 0;
       buzzerPattern = 0;
@@ -293,7 +295,7 @@ int main(void) {
 
 
     // ####### INACTIVITY TIMEOUT #######
-    if (ABS(speedL) > 50 || ABS(speedR) > 50) {
+    if (ABS(speedL) > 5 || ABS(speedR) > 5) {
       inactivity_timeout_counter = 0;
     } else {
       inactivity_timeout_counter ++;

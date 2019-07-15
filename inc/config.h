@@ -25,29 +25,22 @@
 #define BAT_LOW_LVL2            3.4       // your battery is almost empty. Charge now! [V/cell]
 #define BAT_LOW_DEAD            3.3       // undervoltage poweroff. (while not driving) [V/cell]
 
-#define DC_CUR_LIMIT     14         // DC current limit in amps per motor. so 15 means it will draw 30A out of your battery. it does not disable motors, it is a soft current limit.
+#define DC_CUR_LIMIT     15         // DC current limit in amps per motor. so 15 means it will draw 30A out of your battery. it does not disable motors, it is a soft current limit.
 
-#define SOUND_DELAY_UP 80   // how fast is the startup sound
-#define SOUND_DELAY_DOWN 100 // how fast is the shutdown sound
+#define SOUND_DELAY_UP 15//80   // how fast is the startup sound
+#define SOUND_DELAY_DOWN 5//70 // how fast is the shutdown sound
 
 // Board overheat detection: the sensor is inside the STM/GD chip. it is very inaccurate without calibration (up to 45°C). so only enable this funcion after calibration! let your board cool down. see <How to calibrate>. get the real temp of the chip by thermo cam or another temp-sensor taped on top of the chip and write it to TEMP_CAL_LOW_DEG_C. write debug value 8 to TEMP_CAL_LOW_ADC. drive around to warm up the board. it should be at least 20°C warmer. repeat it for the HIGH-values. enable warning and/or poweroff and make and flash firmware.
 #define TEMP_CAL_LOW_ADC        1655      // temperature 1: ADC value
 #define TEMP_CAL_LOW_DEG_C      35.8      // temperature 1: measured temperature [°C]
 #define TEMP_CAL_HIGH_ADC       1588      // temperature 2: ADC value
 #define TEMP_CAL_HIGH_DEG_C     48.9      // temperature 2: measured temperature [°C]
-#define TEMP_WARNING_ENABLE     0         // to beep or not to beep, 1 or 0, DO NOT ACTIVITE WITHOUT CALIBRATION!
+#define TEMP_WARNING_ENABLE     1         // to beep or not to beep, 1 or 0, DO NOT ACTIVITE WITHOUT CALIBRATION!
 #define TEMP_WARNING            60        // annoying fast beeps [°C]
 #define TEMP_POWEROFF_ENABLE    0         // to poweroff or not to poweroff, 1 or 0, DO NOT ACTIVITE WITHOUT CALIBRATION!
 #define TEMP_POWEROFF           65        // overheat poweroff. (while not driving) [°C]
 
 #define INACTIVITY_TIMEOUT 8        // minutes of not driving until poweroff. it is not very precise.
-
-// ############################### ENABLE INTERRUPT READING OF HALL SENSORS FOR POSITION ###############################
-#define HALL_INTERRUPTS
-#define WHEEL_SIZE_INCHES 10
-// ############################### LCD DEBUG ###############################
-
-//#define DEBUG_I2C_LCD             // standard 16x2 or larger text-lcd via i2c-converter on right sensor board cable
 
 // ############################### SERIAL DEBUG ###############################
 
@@ -92,6 +85,21 @@
 // left sensor board cable. keep cable short, use shielded cable, use ferrits, stabalize voltage in nunchuck, use the right one of the 2 types of nunchucks, add i2c pullups. use original nunchuck. most clones does not work very well.
 #define CONTROL_NUNCHUCK            // use nunchuck as input. disable DEBUG_SERIAL_USART3!
 
+// ############################### MOTOR CONTROL (overwrite) #########################
+#define CTRL_TYP_SEL            3   // [-] Control method selection: 0 = Commutation , 1 = Pure Trapezoidal , 2 = Sinusoidal, 3 = Sinusoidal 3rd armonic (default)
+#define PHASE_ADV_ENA           1   // [-] Phase advance enable parameter: 0 = disabled, 1 = enabled (default)
+
+// GENERAL NOTES:
+// 1. All the available motor parameters can be found in the BLDC_controller_data.c
+// 2. For more details regarding the parameters and the working principle of the controller please consult the Simulink model
+// 3. A webview was created, so Matlab/Simulink installation is not needed, unless you want to regenerate the code
+
+// NOTES Phase Advance / Field weakening:
+// 1. In BLDC_controller_data.c you can find the Phase advance Map as a function of Duty Cycle: MAP = a_phaAdv_M1, XAXIS = r_phaAdvDC_XA
+// 2. The default calibration was experimentally calibrated on the real motor based on the minimum noise and minimum torque ripple
+// 3. If you re-calibrate the Phase advance map please take all the safety measures! 
+// 4. I do not recommend more than 40 deg MAX Phase advance. The motors can spin VERY VERY FAST!!! Please use it with care!!
+
 // ############################### DRIVING BEHAVIOR ###############################
 
 // inputs:
@@ -104,12 +112,11 @@
 
 #define FILTER              0.03  // lower value == softer filter. do not use values <0.01, you will get float precision issues.
 #define STEER_FILTER        0.1  // steering should react faster
-#define SPEED_COEFFICIENT   1.05  // higher value == stronger. 0.0 to ~2.0?
-#define DEFAULT_STEER_COEFFICIENT   0.9  // higher value == stronger. if you do not want any steering, set it to 0.0; 0.0 to 1.0
+#define SPEED_COEFFICIENT   0.9  // higher value == stronger. 0.0 to ~2.0?
+#define STEER_COEFFICIENT   0.75  // higher value == stronger. if you do not want any steering, set it to 0.0; 0.0 to 1.0
                                          // steer coefficient while no button pressed
-#define BUTTON_STEER_COEFFICIENT   0.9  // steer coefficient while button2 pressed
-#define INVERT_R_DIRECTION
-#define INVERT_L_DIRECTION
+//#define INVERT_R_DIRECTION
+//#define INVERT_L_DIRECTION
 #define BEEPS_BACKWARD 0    // 0 or 1
 
 // ############################### VALIDATE SETTINGS ###############################
@@ -141,21 +148,26 @@ typedef struct tag_PID_set {
     int I;
     int D;
 } PID_set;
+typedef struct tag_PID_runtime {
+    double lastErr;
+    double errSum;
+    double lastTime;
+} PID_runtime;
 
 typedef struct tag_dynamicConfig_struct{
-    int currentLimit; // global, split to two motors
-    int cellNumber; // Number of cells in battery
     PID_set overcurrent;
-    PID_set speed;
+    PID_set speedL;
+    PID_set speedR;
+    int regulateSpeed;
+    int cellNumber; // Number of cells in battery
     float steerCoeff;
     float speedCoeff;
     float steerFilter;
     float speedFilter;
     int turboMinSpeed;
-    int turboMaxWeak;
     int maxSpeed;
     int maxCurrent;
 } dynamicConfig_struct;
 volatile dynamicConfig_struct dynamicConfig;
-
-void initializeConfigValues();
+volatile PID_runtime pidRuntime_speedL;
+volatile PID_runtime pidRuntime_speedR;

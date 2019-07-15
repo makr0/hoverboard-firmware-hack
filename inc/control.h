@@ -2,6 +2,8 @@
 
 void Nunchuck_Read();
 void Nunchuck_Init();
+void poweroff();
+void remoteControl_Init();
 
 typedef struct tag_remoteControl_struct{
     int speed;

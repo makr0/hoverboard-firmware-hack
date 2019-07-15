@@ -5,18 +5,30 @@
 #include "stdio.h"
 #include "string.h"
 #include "comms.h"
+#include "BLDC_controller.h"           /* Motor Model's header file */
 #include "bldc.h"
 #include "hallinterrupts.h"
 #include "beeper.h"
 #include "control.h"
+#include "operationmode.h"
 #include <string.h>
 #include <stdlib.h>
+#include "BLDC_controller.h"           /* Model's header file */
+#include "rtwtypes.h"
+
+// Matlab includes and defines - from auto-code generation
+// ###############################################################################
+extern RT_MODEL *const rtM_Left;
+extern RT_MODEL *const rtM_Right;
+extern P rtP;                           /* Block parameters (auto storage) */
+// ###############################################################################
+extern uint8_t enable; // global variable for motor enable
 
 volatile ELECTRICAL_PARAMS electrical_measurements;
 
 UART_HandleTypeDef huart2;
 
-char uart_buf[120];
+char uart_buf[255];
 int16_t ch_buf[9];
 
 #ifdef CONTROL_APP_USART2
@@ -34,31 +46,50 @@ int16_t ch_buf[9];
 extern float board_temp_adc_filtered;
 float board_temp_deg_c;
 uint32_t telemetryTimer        = 0;
-extern int8_t mode; // current operation mode
+extern uint32_t timeout; // input timeout
+
+extern int8_t operation_mode; // current operation operation_mode
 extern int steer;  // steer Value
 extern int speed;  // speed value
 extern int speedR; // output speed: 0-1000
 extern int speedL; // output speed: 0-1000
+extern int speedL_regulated;
+extern int speedR_regulated;
+extern int pwml;
+extern int pwmr;
 
+extern ExtY rtY_Left;                   /* outputs from Motor Model left Motor */
+extern ExtY rtY_Right;                  /* outputs from Motor Model right Motor*/
+extern boolean_T MotorControlOverrun; // Motor Model was overrun. Considered an error
 
 void SendTelemetry(int now) {
     memset(uart_buf, 0, sizeof(uart_buf));
     if (telemetryTimer %20 == 0 || now) {  // send voltage and Temperature only every 20th time this function is called
       sprintf(uart_buf,
-      "*V%i*T%i*M%i*C%i*\r\n"
-      "*c%i*o%i*\r\n"
-      "*z%i*Z%i*\r\n"
-      "*y%i*Y%i*\r\n",
-      (int)(electrical_measurements.batteryVoltage*100), (int)electrical_measurements.board_temp_deg_c,mode,electrical_measurements.charging,
+      "*V%i*T%i*M%i*C%i"
+      "*O%i*e%i*t%li"
+      "*c%i*o%i"
+      "*z%i*Z%i"
+      "*y%i*Y%i"
+      "*P%i*I%i*D%i\n",
+      (int)(electrical_measurements.batteryVoltage*100), (int)electrical_measurements.board_temp_deg_c,operation_mode,electrical_measurements.charging,
+      MotorControlOverrun?1:0,enable,timeout,
       dynamicConfig.maxCurrent, dynamicConfig.overcurrent.P,
       (int)(dynamicConfig.speedFilter * 1000),(int)(dynamicConfig.steerFilter * 1000),
-      (int)(dynamicConfig.speedCoeff * 100), (int)(dynamicConfig.steerCoeff * 100));
-      
+      (int)(dynamicConfig.speedCoeff * 100), (int)(dynamicConfig.steerCoeff * 100),
+      dynamicConfig.speedL.P,dynamicConfig.speedL.I,dynamicConfig.speedL.D);
+    } else if (telemetryTimer %10 == 0 || now) {  // send voltage and Temperature only every 20th time this function is called
+      sprintf(uart_buf,
+      "*f%ld*g%ld",
+      (int32_t)speedL_regulated,(int32_t)speedR_regulated);
     } else {
-      sprintf(uart_buf, "*s%i,%i*S%ld*AX%iY%i*a%i*\n",
-      speedR,speedL,
-      HallData[0].HallSpeed + HallData[1].HallSpeed,
-      (int)electrical_measurements.motors[0].dcAmps, (int)electrical_measurements.motors[1].dcAmps,
+      sprintf(uart_buf, "*A%i**B%i"
+                        "*a%i**b%i"
+                        "*S%i"
+                        "*G%i*\n",
+      pwml,pwmr,                   // wanted motor speed
+      rtY_Right.n_mot,rtY_Left.n_mot , // actual motor speed
+      rtY_Right.n_mot+rtY_Left.n_mot , // summed motor speed for the big gauge      
       (int)(electrical_measurements.motors[0].dcAmps + electrical_measurements.motors[1].dcAmps));
     }
 
@@ -139,7 +170,7 @@ void process_message_overflow() {
  * simple values. are stored as integers
  * !maxcN20.                set max overall current to 20A (10A per motor)
  * !cellN10.                set number of Cells to 10 (equals BAT_NUMBER_OF_CELLS on startup)
- * !modeN2.                 set mode number to '2'
+ * !modeN2.                 set operation_mode number to '2'
  *
  * Driving Commands, must be received at least 2 times per second, else motors are stopped (speeed=0, steer=0)
  * Values are stored as integer
@@ -151,9 +182,40 @@ void process_message(char *message) {
 
   // MODE
   if(strStartsWith("modeN", message)) {
-    mode = atoi(message+strlen("modeN"));
-    initializeConfigValues();
-    beep(mode);
+    operation_mode = atoi(message+strlen("modeN"));
+    initializeConfigValues(operation_mode);
+    beep(operation_mode);
+  }
+
+  // change motor control type
+  if(strStartsWith("motorCT",message)) {
+      int ct;
+      ct = atoi(message+strlen("motorCT"));
+      rtP.z_ctrlTypSel = ct;
+      beep(ct);
+  }
+  // reset
+  if(strStartsWith("reset",message)) {
+    HAL_NVIC_SystemReset();
+  }
+  // reset
+  if(strStartsWith("poweroff",message)) {
+    poweroff();
+  }
+  // PID values
+  if(strStartsWith("pidP", message)) {
+    dynamicConfig.speedL.P = atoi(message+strlen("pidP"));
+    dynamicConfig.speedR.P = dynamicConfig.speedL.P;
+  }
+  // PID values
+  if(strStartsWith("pidI", message)) {
+    dynamicConfig.speedL.I = atoi(message+strlen("pidI"));
+    dynamicConfig.speedR.I = dynamicConfig.speedL.I;
+  }
+  // PID values
+  if(strStartsWith("pidD", message)) {
+    dynamicConfig.speedL.D = atoi(message+strlen("pidD"));
+    dynamicConfig.speedR.D = dynamicConfig.speedL.D;
   }
 
   // max Current
